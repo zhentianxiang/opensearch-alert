@@ -52,17 +52,15 @@ query:
                 kubernetes.container_name: ks-console
             - match:
                 kubernetes.container_name: scope-agent
+            - match:
+                kubernetes.container_name: fluent-bit
+            - match:
+                kubernetes.container_name: log-simulator
 threshold: 10
 timeframe: 300
-query_key:
-    - '@timestamp'
-    - log
+query_key: []
 realert: 10
-alert:
-    - email
-    - dingtalk
-    - wechat
-    - feishu
+alert: []
 alert_text: 应用Pod出现错误日志
 alert_text_args: []
 level: High

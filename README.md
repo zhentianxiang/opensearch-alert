@@ -1,391 +1,251 @@
-# KubeSphere-OpenSearch 告警工具
+# KubeSphere-OpenSearch 告警系统
 
-基于 Go 语言开发的 OpenSearch 告警工具，专为 KubeSphere 环境设计，类似于 ElastAlert2，支持多种通知渠道和智能告警级别管理。
+一款基于 Go 的 OpenSearch 告警与可视化系统，支持 Web 管理台、规则管理、配置管理、历史告警查看及多种通知渠道。内置 SQLite/MySQL 双数据库支持，可在 Kubernetes 环境以多副本运行，内置分布式锁与去重，避免重复告警。
 
-## 功能特性
+## 功能总览
 
-- 🔍 **多索引查询**: 支持查询不同类型的 OpenSearch 索引（日志、事件、审计）
-- 📊 **灵活规则**: 支持频率、任意、突增、突降等多种告警规则类型
-- 🔔 **多通知渠道**: 支持邮件、钉钉、企业微信、飞书通知
-- 🎯 **智能告警级别**: 支持 5 级告警分类，可自定义或自动判断
-- 🚫 **告警抑制**: 支持告警去重和指数级抑制机制
-- 📱 **消息格式优化**: 针对不同通知渠道优化消息格式和显示效果
-- ⚡ **高性能**: 基于 Go 语言，性能优异
-- 🐳 **容器化**: 支持 Docker 和 Kubernetes 部署
-- 📝 **详细日志**: 提供 DEBUG 级别日志，便于调试和监控
+- 多数据源：对接 OpenSearch（日志、事件、审计）。
+- 灵活规则：frequency/any/spike/flatline 等，YAML 文件配置，可启用/禁用，Web 可视化编辑与持久化。
+- 通知渠道：Email、钉钉、企业微信、飞书。
+- 告警级别：Critical/High/Medium/Low/Info，支持自动判断与自定义。
+- 告警抑制：固定间隔与指数级抑制；跨副本共享（后续可持续增强）。
+- 历史与仪表盘：Dashboard 图表（级别分布/时间趋势/总量）、列表分页、详情与原始消息展示。
+- 安全：登录会话、RBAC（admin/viewer）、密码不回传；XSS 转义。
+- 多数据库：SQLite（默认）/MySQL 8.0+，Session 与告警历史持久化。
+- 多副本：规则级分布式锁、发送前去重、状态持久化（进行中）。
 
-## 项目结构
+## 目录结构
 
 ```
 opensearch-alert/
-├── cmd/alert/                 # 主程序入口
-├── internal/                  # 内部包
-│   ├── config/               # 配置管理
-│   ├── opensearch/           # OpenSearch 客户端
-│   ├── alert/                # 告警引擎
-│   └── notification/         # 通知渠道
-├── pkg/types/                # 类型定义
-├── configs/                  # 配置文件
-│   ├── config.yaml          # 主配置
-│   └── rules/               # 告警规则
-├── k8s/                     # Kubernetes 部署文件
-└── Dockerfile               # Docker 构建文件
+├── cmd/alert/                  # 主程序入口
+├── internal/
+│   ├── alert/                  # 告警引擎（规则执行、触发、写回 OS、分布式锁/去重）
+│   ├── config/                 # 配置加载与规则加载
+│   ├── database/               # 数据库抽象（SQLite/MySQL）
+│   ├── notification/           # 通知渠道（email/dingtalk/wechat/feishu）
+│   ├── opensearch/             # OpenSearch 客户端
+│   └── web/                    # Web 服务端（API、模板、静态资源）
+├── pkg/types/                  # 公共类型定义
+├── configs/
+│   ├── config.yaml             # 主配置（OpenSearch、通知、日志、Web、数据库、鉴权、规则默认）
+│   └── rules/                  # 规则文件目录（*.yaml）
+├── web/
+│   ├── templates/              # 页面模板（dashboard/alerts/rules/config/login）
+│   └── static/                 # JS/CSS 资源
+├── k8s/                        # Kubernetes 清单（ConfigMap/Deployment/Service/RBAC）
+├── Dockerfile                  # 构建镜像
+└── WEB_DASHBOARD.md            # Web 控制台说明
 ```
 
-## 快速开始
+## 构建与运行
 
-### 1. 构建镜像
-
+### 本地运行
 ```bash
-# 构建 Docker 镜像
-docker build -t opensearch-alert:latest .
-
-# 或者使用 Go 直接运行
 go mod tidy
-go run cmd/alert/main.go -config=configs/config.yaml -rules=configs/rules
+go run cmd/alert/main.go -config=configs/config.yaml
 ```
 
-### 2. 配置 OpenSearch 连接
-
-编辑 `configs/config.yaml`:
-
-```yaml
-opensearch:
-  host: "opensearch-cluster-data.kubesphere-logging-system"
-  port: 9200
-  protocol: "https"
-  username: "admin"
-  password: "admin"
-  verify_certs: false
+### Docker
+```bash
+docker build -t opensearch-alert:latest .
+docker run --rm -p 8080:8080 \
+  -v $(pwd)/configs:/app/configs \
+  -v $(pwd)/data:/app/data \
+  -e INSTANCE_ID=$(hostname) \
+  opensearch-alert:latest
 ```
 
-### 3. 配置通知渠道
-
-#### 邮件配置
-```yaml
-notifications:
-  email:
-    enabled: true
-    smtp_server: "smtp.qq.com"
-    smtp_port: 587
-    username: "your-email@qq.com"
-    password: "your-auth-code"  # QQ邮箱使用授权码
-    from_email: "your-email@qq.com"
-    to_emails: ["admin@company.com"]
-    use_tls: true
-```
-
-#### 钉钉配置
-```yaml
-notifications:
-  dingtalk:
-    enabled: true
-    webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN"
-    secret: "YOUR_SECRET"
-    at_mobiles: ["13800138000"]
-    at_all: false
-```
-
-#### 企业微信配置
-```yaml
-notifications:
-  wechat:
-    enabled: true
-    webhook_url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY"
-    mentioned_list: []
-    mentioned_mobile_list: ["13800138000"]
-    at_all: false
-```
-
-#### 飞书配置
-```yaml
-notifications:
-  feishu:
-    enabled: true
-    webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_HOOK"
-    secret: ""
-    at_mobiles: []
-    at_all: true
-```
-
-### 4. 配置告警规则
-
-在 `configs/rules/` 目录下创建 YAML 规则文件:
-
-```yaml
-name: "Pod 异常事件告警"
-type: "frequency"
-index: "ks-whizard-events-*"
-threshold: 1
-timeframe: 60
-query:
-  bool:
-    must:
-      - term:
-          type: "Warning"
-      - bool:
-          should:
-            - term:
-                reason: "BackOff"
-            - term:
-                reason: "Failed"
-          minimum_should_match: 1
-alert:
-  - "dingtalk"
-  - "wechat"
-level: "High"  # 可选：Critical, High, Medium, Low, Info
-enabled: true
-```
-
-### 告警级别配置
-
-系统支持 5 个告警级别，用户可以在规则文件中自定义：
-
-- **Critical（严重）**：系统组件错误、安全事件等，会@用户
-- **High（高优先级）**：应用错误日志等，会@用户  
-- **Medium（中等优先级）**：警告日志等，不会@用户
-- **Low（低优先级）**：一般告警，不会@用户
-- **Info（信息）**：测试或信息通知，不会@用户
-
-#### 自定义告警级别
-在规则文件中添加 `level` 字段：
-```yaml
-name: "数据库连接失败告警"
-level: "Critical"  # 自定义级别
-enabled: true
-```
-
-#### 自动级别判断
-如果不指定 `level` 字段，系统会根据规则名称自动判断：
-- 包含"系统组件"+"错误" → Critical
-- 包含"安全" → Critical  
-- 包含"fatal"或"panic" → Critical
-- 包含"错误" → High
-- 包含"警告" → Medium
-- 其他 → Low
-
-## 消息格式优化
-
-### 钉钉消息
-- 支持 Markdown 格式，使用 `  \n  ` 实现垂直排列
-- 根据告警级别自动@用户（Critical、High 级别）
-- 消息内容清晰，字段垂直排列
-
-### 企业微信消息  
-- 转换为纯文本格式，去除 Markdown 符号
-- 根据告警级别自动@用户
-- 消息简洁易读
-
-### 飞书消息
-- 使用 `lark_md` 格式，优化代码块显示
-- 自动清理多余空行，保持格式整洁
-- 根据告警级别自动@用户
-
-### 邮件消息
-- 使用 HTML 格式，支持丰富的样式
-- 字段垂直排列，告警级别用颜色区分
-- 自动转换 Markdown 为 HTML 格式
-- 支持代码块、粗体等格式
-
-## 日志配置
-
-系统提供详细的日志记录，便于调试和监控：
-
-```yaml
-logging:
-  level: "DEBUG"            # 日志级别：DEBUG, INFO, WARN, ERROR
-  format: "2006-01-02 15:04:05 - %s - %s - %s"  # 日志格式
-  file: "log/opensearch-alert/alert.log"  # 日志文件路径
-  max_size: "10MB"          # 单个日志文件最大大小
-  backup_count: 5           # 保留的日志文件备份数量
-```
-
-### 日志内容
-- **OpenSearch 连接日志**：查询执行、响应状态等
-- **规则加载日志**：规则文件扫描、加载状态等  
-- **告警级别判断日志**：自动级别判断过程
-- **通知发送日志**：各渠道发送成功/失败状态
-- **告警引擎日志**：规则执行、告警触发等
-
-## Kubernetes 部署
-
-### 1. 创建 ConfigMap
-
+### Kubernetes
 ```bash
 kubectl apply -f k8s/configmap.yaml
-```
-
-### 2. 部署应用
-
-```bash
 kubectl apply -f k8s/deployment.yaml
 kubectl apply -f k8s/service.yaml
 ```
+- 多副本运行：Deployment `replicas > 1`，建议：
+  - MySQL：各副本共享同库即可。
+  - SQLite：使用 PVC 共享同一 DB 文件（路径见 `configs/config.yaml` 的 `database.path`）。
+  - 设置环境变量 `INSTANCE_ID`（可使用 Downward API 注入 Pod 名）。
 
-### 3. 查看日志
-
-```bash
-kubectl logs -f deployment/opensearch-alert -n kube-logging
-```
-
-## 告警规则类型
-
-### 1. frequency (频率型)
-在指定时间窗口内达到阈值时触发告警。
-
+示例（在 Deployment 容器 env 中）：
 ```yaml
-type: "frequency"
-threshold: 5
-timeframe: 300  # 5分钟内
+- name: INSTANCE_ID
+  valueFrom:
+    fieldRef:
+      fieldPath: metadata.name
 ```
 
-### 2. any (任意型)
-匹配到任何记录即触发告警。
+## 配置说明（configs/config.yaml）
 
+关键字段摘要（按实际文件为准）：
+- opensearch：主机、端口、协议、认证、证书校验、超时。
+- alert_engine：
+  - run_interval: 规则运行周期（秒）
+  - buffer_time: 查询时间缓冲（秒）
+  - writeback_index: 写回 OpenSearch 的索引名
+  - alert_time_limit: 告警时间窗口限制（秒）
+  - lock_ttl_seconds（可选，待加入）：分布式锁 TTL
+  - dedupe_ttl_seconds（可选，待加入）：发送去重 TTL
+- alert_suppression：是否开启、固定间隔、指数级抑制参数。
+- notifications：Email/DingTalk/WeChat/Feishu 开关与凭据。
+- logging：级别、格式、文件、滚动策略。
+- web：监听、静态路径、模板路径、会话密钥等。
+- database：
+  - type: sqlite | mysql
+  - SQLite: path、连接池
+  - MySQL: host/port/username/password/dbname/params（默认含 `charset=utf8mb4&parseTime=true&loc=Local`）
+- auth：开关、会话超时、用户列表（admin/viewer）。
+- rules：规则目录、默认时间窗/阈值。
+
+## 规则文件（configs/rules/*.yaml）
+
+统一格式示例：
 ```yaml
-type: "any"
-threshold: 1
+name: "应用Pod警告日志告警"
+type: "frequency"          # frequency|any|spike|flatline
+index: "ks-whizard-logging-*"
+threshold: 1                # 触发阈值
+timeframe: 300              # 秒
+query:                      # OpenSearch DSL 片段
+  bool:
+    must:
+      - term: { level: "WARNING" }
+      - match: { message: "error|fail|warn" }
+alert:
+  - "feishu"
+level: "Medium"            # 可选；不填将自动判断
+enabled: true
 ```
 
-### 3. spike (突增型)
-检测流量突增时触发告警。
+## Web 管理台
+- Dashboard：总量、级别分布、时间趋势、活跃规则数。
+- 告警列表：分页、筛选、查看详情（含原始 message 转义显示）。
+- 规则管理：启用/禁用、编辑保存（落盘到 rules/*.yaml），阈值即时刷新，RBAC 校验。
+- 配置管理：查看与编辑（持久化到 `configs/config.yaml`），MySQL/SQLite 字段动态显示。
+- 登录/RBAC：`admin` 可写、`viewer` 只读；认证信息不回传（密码字段不序列化）。
+- UI 优化：统一按钮样式、配色对比度提升、页脚版权。
 
-```yaml
-type: "spike"
-threshold: 10
-timeframe: 60
+## 多副本支持（重要）
+- 分布式锁（`rule_locks` 表）：
+  - 按规则名租约锁；仅持有锁的副本执行该规则；TTL 默认 30 秒。
+  - 键字段：`rule_name, locked_by, locked_at, ttl_seconds`。
+- 发送前去重（`alert_dedupe` 表）：
+  - 去重键：`(rule_name, level, SHA1(message))`。
+  - 在 TTL（默认 120s）内已发送则跳过发送与落库。
+- 历史写库（`alert_history` 表）：
+  - 用于 Dashboard/列表/详情/统计；与发送链路解耦。
+
+## 常用 MySQL 查询
+
+```sql
+-- 设置客户端、连接、结果集字符集
+SET NAMES utf8mb4;
+
+-- 查询最近100条
+SELECT DATE_FORMAT(timestamp,'%Y-%m-%d %H:%i:%s') AS ts, rule_name, level, message, count
+FROM alert_history
+ORDER BY timestamp DESC
+LIMIT 100;
+
+-- 查询24小时内的
+SELECT DATE_FORMAT(timestamp,'%H') AS hour, COUNT(*) AS cnt
+FROM alert_history
+WHERE timestamp >= NOW() - INTERVAL 24 HOUR
+GROUP BY hour
+ORDER BY hour;
+
+-- 查询告警级别出现的次数
+SELECT level, COUNT(*) AS cnt
+FROM alert_history
+GROUP BY level;
+
+-- 最近告警，便于人工核对
+SELECT DATE_FORMAT(timestamp,'%Y-%m-%d %H:%i:%s') AS ts, rule_name, level, LEFT(message, 120) AS msg, count
+FROM alert_history
+ORDER BY timestamp DESC
+LIMIT 50;
+
+-- 去重表：最近一次发送的签名与时间
+SELECT rule_name, level, message_hash, DATE_FORMAT(last_sent,'%Y-%m-%d %H:%i:%s') AS last_sent, ttl_seconds
+FROM alert_dedupe
+ORDER BY last_sent DESC
+LIMIT 20;
+
+-- 锁表：查看谁持有锁；age_seconds > ttl_seconds 说明锁已过期
+SELECT rule_name, locked_by,
+       TIMESTAMPDIFF(SECOND, locked_at, NOW()) AS age_seconds,
+       ttl_seconds
+FROM rule_locks
+ORDER BY locked_at DESC
+LIMIT 50;
+
+-- 检查近10分钟是否有重复发送（同规则/级别/消息）
+SELECT rule_name, level, SHA1(message) AS msg_hash, COUNT(*) AS cnt,
+       MIN(timestamp) AS first_ts, MAX(timestamp) AS last_ts
+FROM alert_history
+WHERE timestamp >= NOW() - INTERVAL 10 MINUTE
+GROUP BY rule_name, level, msg_hash
+HAVING cnt > 1
+ORDER BY cnt DESC;
+
+-- 针对某个 message_hash 验证在 TTL(120s) 内是否只落一条
+SELECT DATE_FORMAT(timestamp,'%Y-%m-%d %H:%i:%s') AS ts, alert_id, rule_name, level,
+       LEFT(message, 120) AS msg
+FROM alert_history
+WHERE rule_name='应用Pod警告日志告警' AND level='Medium'
+  AND SHA1(message)='09b01e1f2b944249937a83afd8c6f494d3f4a5b6'
+ORDER BY timestamp DESC
+LIMIT 5;
+
+-- 观察当前持有锁的副本（执行窗口内跑这条）
+SELECT rule_name, locked_by,
+       TIMESTAMPDIFF(SECOND, locked_at, NOW()) AS age_seconds, ttl_seconds
+FROM rule_locks
+WHERE locked_by <> ''
+ORDER BY locked_at DESC
+LIMIT 50;
 ```
 
-### 4. flatline (突降型)
-检测流量低于阈值时触发告警。
+## SQLite 查询示例
 
-```yaml
-type: "flatline"
-threshold: 5
-timeframe: 300
+```sql
+-- 最近100条
+SELECT strftime('%Y-%m-%d %H:%M:%S', timestamp, 'localtime') AS ts, rule_name, level, message, count
+FROM alert_history
+ORDER BY timestamp DESC
+LIMIT 100;
+
+-- 24小时内的
+SELECT strftime('%H', timestamp, 'localtime') AS hour, COUNT(*) AS cnt
+FROM alert_history
+WHERE timestamp >= datetime('now','-24 hours')
+GROUP BY hour
+ORDER BY hour;
+
+-- 级别统计
+SELECT level, COUNT(*) AS cnt FROM alert_history GROUP BY level;
+
+-- 去重表/锁表（类似 MySQL，注意时间函数差异）
+SELECT rule_name, level, message_hash, last_sent, ttl_seconds FROM alert_dedupe ORDER BY last_sent DESC LIMIT 20;
+SELECT rule_name, locked_by, locked_at, ttl_seconds FROM rule_locks ORDER BY locked_at DESC LIMIT 50;
 ```
 
-## 告警抑制机制
+## 安全与 RBAC
+- 仅 `admin` 角色可编辑配置/规则、启用/禁用规则。
+- `viewer` 只读；前后端均校验。
+- `/api/auth/check` 不返回明文密码；后端结构体已通过 `json:"-"` 屏蔽密码字段。
+- 前端显示原始 message 时进行 HTML 转义，降低 XSS 风险。
 
-### 1. 基础抑制
-相同告警的最小间隔时间。
+## 日志与排障
+- 统一日志格式；规则加载日志降为 debug；控制台更干净。
+- 如时间趋势轴不准，确认 DB 查询使用本地时区（已修正 SQLite `strftime('localtime')` 与 MySQL `DATE_FORMAT`）。
+- MySQL 字符集：确保 `charset=utf8mb4`，客户端可 `SET NAMES utf8mb4`。
 
-```yaml
-realert: 5  # 5分钟内相同告警只发送一次
-```
-
-### 2. 指数级抑制
-告警间隔逐渐增加，避免告警风暴。
-
-```yaml
-alert_suppression:
-  enabled: true
-  realert_minutes: 5
-  exponential_realert:
-    enabled: true
-    hours: 1  # 每次重复告警间隔乘以1小时
-```
-
-## 监控的索引类型
-
-### 1. 事件索引 (ks-whizard-events-*)
-- Pod 异常事件
-- 资源删除事件
-- 重启事件
-
-### 2. 日志索引 (ks-whizard-logging-*)
-- 应用错误日志
-- 系统错误日志
-- 异常堆栈信息
-
-### 3. 审计索引 (ks-whizard-auditing-*)
-- 安全操作审计
-- 权限变更审计
-- 敏感资源操作
-
-## 故障排除
-
-### 常见问题
-
-#### 1. 邮件发送失败
-**错误信息**：`535 Login fail. Account is abnormal...`
-
-**解决方案**：
-- 检查 QQ 邮箱是否开启 SMTP 服务
-- 使用授权码而不是登录密码
-- 参考 `QQ邮箱配置指南.md` 详细配置步骤
-
-#### 2. 钉钉消息格式问题
-**问题**：消息横向挤在一起，没有垂直排列
-
-**解决方案**：
-- 确保使用 `  \n  ` 格式（两个空格+换行+两个空格）
-- 检查 Markdown 格式是否正确
-
-#### 3. 企业微信显示 Markdown 符号
-**问题**：消息中显示 `**`、`---` 等符号
-
-**解决方案**：
-- 系统已自动转换为纯文本格式
-- 如仍有问题，检查消息内容处理逻辑
-
-#### 4. 飞书代码块不显示
-**问题**：` ``` ` 代码块标记不生效
-
-**解决方案**：
-- 系统已自动清理代码块标记
-- 使用 `lark_md` 格式优化显示
-
-### 调试方法
-
-1. **启用 DEBUG 日志**：
-   ```yaml
-   logging:
-     level: "DEBUG"
-   ```
-
-2. **查看详细日志**：
-   ```bash
-   tail -f log/opensearch-alert/alert.log
-   ```
-
-3. **检查通知发送状态**：
-   日志中会显示各渠道发送成功/失败的详细信息
-
-## 开发说明
-
-### 添加新的通知渠道
-
-1. 在 `internal/notification/` 下创建新的通知器
-2. 实现 `Notifier` 接口
-3. 在 `notifier.go` 中注册新渠道
-4. 添加相应的配置验证和错误处理
-
-### 添加新的告警规则类型
-
-1. 在 `internal/alert/engine.go` 的 `shouldTriggerAlert` 方法中添加新类型
-2. 实现相应的检测逻辑
-3. 添加相应的日志记录
-
-### 自定义消息格式
-
-1. 修改各通知渠道的 `buildXXXMessage` 方法
-2. 添加消息内容格式化方法
-3. 测试不同告警级别的显示效果
-
-## 更新日志
-
-### v2.0.0 (2025-09-20)
-- ✨ 新增飞书通知支持
-- ✨ 新增智能告警级别管理
-- ✨ 新增邮件通知支持
-- 🎨 优化各渠道消息格式
-- 🐛 修复钉钉消息排列问题
-- 🐛 修复企业微信 Markdown 符号问题
-- 🐛 修复飞书代码块显示问题
-- 📝 增强日志记录和调试功能
-- 📚 完善配置注释和文档
+## 版本与变更要点（近期）
+- 新增 MySQL 8.0+ 支持（连接、表结构、索引创建差异、会话 UPSERT）。
+- Web 管理完善：规则启停/编辑、配置编辑持久化、分页、详情原文展示。
+- 安全修复：不回传密码、RBAC 生效。
+- 多副本能力：规则级锁（`rule_locks`）、发送前去重（`alert_dedupe`）。
 
 ## 许可证
-
 MIT License

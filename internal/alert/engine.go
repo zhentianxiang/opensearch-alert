@@ -7,6 +7,7 @@ import (
 	"opensearch-alert/internal/notification"
 	"opensearch-alert/internal/opensearch"
 	"opensearch-alert/pkg/types"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -84,6 +85,24 @@ func (e *Engine) runRule(rule types.AlertRule) {
 
 	e.logger.Debugf("执行规则: %s", rule.Name)
 
+	// 多副本互斥：获取规则级租约锁
+	instanceID := getInstanceID()
+	ttl := 30 // 默认租约30秒
+	locked, err := e.database.AcquireRuleLock(rule.Name, instanceID, ttl)
+	if err != nil {
+		e.logger.Warnf("获取规则锁失败 %s: %v", rule.Name, err)
+		return
+	}
+	if !locked {
+		e.logger.Debugf("规则 %s 未获得锁，跳过本轮", rule.Name)
+		return
+	}
+	defer func() {
+		if err := e.database.ReleaseRuleLock(rule.Name, instanceID); err != nil {
+			e.logger.Warnf("释放规则锁失败 %s: %v", rule.Name, err)
+		}
+	}()
+
 	// 检查告警抑制
 	if e.isSuppressed(rule.Name) {
 		e.logger.Debugf("规则 %s 被抑制", rule.Name)
@@ -104,6 +123,15 @@ func (e *Engine) runRule(rule types.AlertRule) {
 	if e.shouldTriggerAlert(rule, response) {
 		e.triggerAlert(rule, response)
 	}
+}
+
+// getInstanceID 返回实例标识，用于分布式锁标记
+func getInstanceID() string {
+	if v := os.Getenv("INSTANCE_ID"); v != "" {
+		return v
+	}
+	h, _ := os.Hostname()
+	return h
 }
 
 // shouldTriggerAlert 检查是否应该触发告警
@@ -143,6 +171,17 @@ func (e *Engine) triggerAlert(rule types.AlertRule, response *types.OpenSearchRe
 		Data:      e.extractAlertData(response),
 		Count:     response.Hits.Total.Value,
 		Matches:   len(response.Hits.Hits),
+	}
+
+	// 去重：在发送与落库前检查
+	dedupeTTL := 120 // 秒（可后续做成配置）
+	shouldSend, err := e.database.ShouldSendAndTouch(alert.RuleName, alert.Level, alert.Message, dedupeTTL)
+	if err != nil {
+		e.logger.Warnf("去重检查失败（忽略错误继续）: %v", err)
+	}
+	if !shouldSend {
+		e.logger.Infof("规则 %s 去重命中，跳过发送与落库", rule.Name)
+		return
 	}
 
 	// 发送通知

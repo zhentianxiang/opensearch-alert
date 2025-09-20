@@ -1,6 +1,7 @@
 package database
 
 import (
+	"crypto/sha1"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -108,6 +109,33 @@ func (d *Database) initTables() error {
 			return fmt.Errorf("创建用户会话表失败: %w", err)
 		}
 
+		// 规则锁表（租约锁）
+		createRuleLockTable := `
+        CREATE TABLE IF NOT EXISTS rule_locks (
+            rule_name VARCHAR(255) PRIMARY KEY,
+            locked_by VARCHAR(255) NOT NULL DEFAULT '',
+            locked_at TIMESTAMP NULL,
+            ttl_seconds INT NOT NULL DEFAULT 30
+        )`
+		if _, err := d.db.Exec(createRuleLockTable); err != nil {
+			return fmt.Errorf("创建规则锁表失败: %w", err)
+		}
+
+		// 去重表：记录最近一次发送的告警签名
+		createDedupeTable := `
+        CREATE TABLE IF NOT EXISTS alert_dedupe (
+            dedupe_key VARCHAR(255) PRIMARY KEY,
+            alert_id VARCHAR(191) NOT NULL,
+            rule_name VARCHAR(255) NOT NULL,
+            level VARCHAR(32) NOT NULL,
+            message_hash VARCHAR(64) NOT NULL,
+            last_sent DATETIME NOT NULL,
+            ttl_seconds INT NOT NULL DEFAULT 120
+        )`
+		if _, err := d.db.Exec(createDedupeTable); err != nil {
+			return fmt.Errorf("创建去重表失败: %w", err)
+		}
+
 		// MySQL 不支持 CREATE INDEX IF NOT EXISTS，这里直接创建并忽略已存在错误(1061)
 		indexes := []string{
 			"CREATE INDEX idx_alert_id ON alert_history(alert_id)",
@@ -156,6 +184,33 @@ func (d *Database) initTables() error {
         )`
 		if _, err := d.db.Exec(createSessionTable); err != nil {
 			return fmt.Errorf("创建用户会话表失败: %w", err)
+		}
+
+		// 规则锁表（租约锁）
+		createRuleLockTable := `
+        CREATE TABLE IF NOT EXISTS rule_locks (
+            rule_name TEXT PRIMARY KEY,
+            locked_by TEXT NOT NULL DEFAULT '',
+            locked_at DATETIME,
+            ttl_seconds INTEGER NOT NULL DEFAULT 30
+        )`
+		if _, err := d.db.Exec(createRuleLockTable); err != nil {
+			return fmt.Errorf("创建规则锁表失败: %w", err)
+		}
+
+		// 去重表
+		createDedupeTable := `
+        CREATE TABLE IF NOT EXISTS alert_dedupe (
+            dedupe_key TEXT PRIMARY KEY,
+            alert_id TEXT NOT NULL,
+            rule_name TEXT NOT NULL,
+            level TEXT NOT NULL,
+            message_hash TEXT NOT NULL,
+            last_sent DATETIME NOT NULL,
+            ttl_seconds INTEGER NOT NULL DEFAULT 120
+        )`
+		if _, err := d.db.Exec(createDedupeTable); err != nil {
+			return fmt.Errorf("创建去重表失败: %w", err)
 		}
 
 		indexes := []string{
@@ -458,6 +513,48 @@ func (d *Database) SaveSession(sessionID, username, role string, expiresAt time.
 	return nil
 }
 
+// AcquireRuleLock 尝试获取某条规则的执行锁
+// 返回 true 表示成功获得租约
+func (d *Database) AcquireRuleLock(ruleName, instanceID string, ttlSeconds int) (bool, error) {
+	now := time.Now()
+	// 先确保占位行存在
+	if d.dbType == "mysql" {
+		_, _ = d.db.Exec("INSERT IGNORE INTO rule_locks(rule_name, ttl_seconds) VALUES(?, ?)", ruleName, ttlSeconds)
+		res, err := d.db.Exec(`UPDATE rule_locks 
+            SET locked_by=?, locked_at=?
+            WHERE rule_name=? AND (locked_at IS NULL OR locked_at <= DATE_SUB(?, INTERVAL ttl_seconds SECOND) OR locked_by=?)`,
+			instanceID, now, ruleName, now, instanceID)
+		if err != nil {
+			return false, err
+		}
+		n, _ := res.RowsAffected()
+		return n == 1, nil
+	}
+	// SQLite
+	_, _ = d.db.Exec("INSERT OR IGNORE INTO rule_locks(rule_name, ttl_seconds) VALUES(?, ?)", ruleName, ttlSeconds)
+	res, err := d.db.Exec(`UPDATE rule_locks 
+        SET locked_by=?, locked_at=?
+        WHERE rule_name=? AND (locked_at IS NULL OR locked_at <= datetime(?, '-' || ttl_seconds || ' seconds') OR locked_by=?)`,
+		instanceID, now, ruleName, now, instanceID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}
+
+// ReleaseRuleLock 释放规则锁
+func (d *Database) ReleaseRuleLock(ruleName, instanceID string) error {
+	if d.dbType == "mysql" {
+		_, err := d.db.Exec(`UPDATE rule_locks SET locked_by='', locked_at = DATE_SUB(NOW(), INTERVAL ttl_seconds SECOND)
+            WHERE rule_name=? AND locked_by=?`, ruleName, instanceID)
+		return err
+	}
+	_, err := d.db.Exec(`UPDATE rule_locks SET locked_by='', locked_at = datetime('now','-1 second')
+        WHERE rule_name=? AND locked_by=?`, ruleName, instanceID)
+	return err
+}
+
 // GetSession 获取用户会话
 func (d *Database) GetSession(sessionID string) (*types.User, error) {
 	query := `
@@ -492,6 +589,66 @@ func (d *Database) DeleteSession(sessionID string) error {
 	}
 
 	return nil
+}
+
+// ShouldSendAndTouch 发送前去重：
+// - 以 (rule_name, level, message_hash) 作为去重签名（可加上聚合键等）
+// - 若在 TTL 内已发送，则返回 false
+// - 否则更新/插入最近发送时间并返回 true
+func (d *Database) ShouldSendAndTouch(ruleName, level, message string, ttlSeconds int) (bool, error) {
+	if ttlSeconds <= 0 {
+		ttlSeconds = 120
+	}
+	// 计算消息哈希（避免长文本索引）
+	h := sha1.Sum([]byte(message))
+	messageHash := fmt.Sprintf("%x", h[:])
+	dedupeKey := fmt.Sprintf("%s|%s|%s", ruleName, level, messageHash)
+
+	now := time.Now()
+	// MySQL 与 SQLite 写法分支
+	if d.dbType == "mysql" {
+		// 占位
+		_, _ = d.db.Exec("INSERT IGNORE INTO alert_dedupe(dedupe_key, alert_id, rule_name, level, message_hash, last_sent, ttl_seconds) VALUES(?, '', ?, ?, ?, DATE_SUB(?, INTERVAL ttl_seconds SECOND), ?)", dedupeKey, ruleName, level, messageHash, now, ttlSeconds)
+		// 检查是否过期
+		var lastSent time.Time
+		err := d.db.QueryRow("SELECT last_sent FROM alert_dedupe WHERE dedupe_key=?", dedupeKey).Scan(&lastSent)
+		if err != nil && err != sql.ErrNoRows {
+			return false, err
+		}
+		// 若在 TTL 内，拒绝发送
+		if !lastSent.IsZero() && lastSent.After(now.Add(-time.Duration(ttlSeconds)*time.Second)) {
+			return false, nil
+		}
+		// 更新为现在
+		_, err = d.db.Exec("UPDATE alert_dedupe SET last_sent=?, ttl_seconds=? WHERE dedupe_key=?", now, ttlSeconds, dedupeKey)
+		if err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	// SQLite
+	_, _ = d.db.Exec("INSERT OR IGNORE INTO alert_dedupe(dedupe_key, alert_id, rule_name, level, message_hash, last_sent, ttl_seconds) VALUES(?, '', ?, ?, ?, datetime(?, '-' || ttl_seconds || ' seconds'), ?)", dedupeKey, ruleName, level, messageHash, now, ttlSeconds)
+	var lastSentStr string
+	err := d.db.QueryRow("SELECT last_sent FROM alert_dedupe WHERE dedupe_key=?", dedupeKey).Scan(&lastSentStr)
+	if err != nil && err != sql.ErrNoRows {
+		return false, err
+	}
+	var lastSent time.Time
+	if lastSentStr != "" {
+		// SQLite parse
+		lst, perr := time.Parse("2006-01-02 15:04:05", lastSentStr)
+		if perr == nil {
+			lastSent = lst
+		}
+	}
+	if !lastSent.IsZero() && lastSent.After(now.Add(-time.Duration(ttlSeconds)*time.Second)) {
+		return false, nil
+	}
+	_, err = d.db.Exec("UPDATE alert_dedupe SET last_sent=?, ttl_seconds=? WHERE dedupe_key=?", now, ttlSeconds, dedupeKey)
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // CleanExpiredSessions 清理过期会话

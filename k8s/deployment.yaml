@@ -9,8 +9,8 @@ metadata:
     component: "monitoring"
 spec:
   replicas: 1
-  strategy:
-    type: Recreate  # 单副本应用使用Recreate策略
+  #strategy:
+   # type: Recreate  # 单副本应用使用Recreate策略
   selector:
     matchLabels:
       app: opensearch-alert
@@ -27,6 +27,11 @@ spec:
         runAsUser: 1001
         runAsGroup: 1001
         fsGroup: 1001
+      tolerations:
+      - key: "k8s-app"
+        operator: "Equal"
+        value: "worker"
+        effect: "NoSchedule"
       containers:
       - name: opensearch-alert
         image: harbor.tianxiang.love:30443/k8s-app/opensearch-alert:v2.0.0
@@ -38,6 +43,10 @@ spec:
         env:
         - name: TZ
           value: "Asia/Shanghai"
+        - name: INSTANCE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
         resources:
           requests:
             memory: "256Mi"
