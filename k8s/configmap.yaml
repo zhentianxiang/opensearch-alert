@@ -1,0 +1,421 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opensearch-alert-config
+  namespace: k8s-app
+  labels:
+    app: opensearch-alert
+    version: "v2.0.0"
+data:
+  config.yaml: |
+    opensearch:
+        host: opensearch-cluster-data.kubesphere-logging-system
+        port: 9200
+        protocol: https
+        username: admin
+        password: admin
+        verify_certs: false
+        timeout: 30
+    alert_engine:
+        run_interval: 60
+        buffer_time: 300
+        max_running_rules: 10
+        writeback_index: opensearch_alert_status
+        alert_time_limit: 172800
+    alert_suppression:
+        enabled: true
+        realert_minutes: 2
+        exponential_realert:
+            enabled: false
+            hours: 1
+    notifications:
+        email:
+            enabled: false
+            smtp_server: smtp.qq.com
+            smtp_port: 587
+            username: 2099637909@qq.com
+            password: xxxxxxxxxxxxxxxx
+            from_email: 2099637909@qq.com
+            to_emails: []
+            use_tls: true
+        dingtalk:
+            enabled: false
+            webhook_url: https://oapi.dingtalk.com/robot/send?access_token=3b270c49f421bxxxxxxxxxxxxxxxxxxxxx
+            secret: SECbd1123d0b434ac3dbd4f1xxxxxxxxxxxxxxx
+            at_mobiles:
+                - "1833282xxxx"
+            at_all: false
+        wechat:
+            enabled: false
+            webhook_url: https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=5f7c6145-47f9-441c-xxxxxxxxxxxxxxxxxx
+            mentioned_list: []
+            mentioned_mobile_list:
+                - "1833282xxxx"
+            at_all: false
+        feishu:
+            enabled: true
+            webhook_url: https://open.feishu.cn/open-apis/bot/v2/hook/a06d5b36-a9d2-4408-a1dc-xxxxxxxxxxxx
+            secret: ""
+            at_mobiles: []
+            at_all: true
+    logging:
+        level: INFO
+        format: 2006-01-02 15:04:05 - %s - %s - %s
+        file: logs/opensearch-alert/alert.log
+        max_size: 10MB
+        backup_count: 5
+    web:
+        enabled: true
+        host: 0.0.0.0
+        port: 8080
+        static_path: web/static
+        template_path: web/templates
+        session_secret: opensearch-alert-secret-key-2024
+    #database:
+    #    type: sqlite
+    #    path: data/opensearch-alert.db
+    #    max_connections: 10
+    #    max_idle_connections: 5
+    database:
+      type: mysql
+      host: mysql-cluster.middleware
+      port: 6446
+      username: opensearch_alert
+      password: opensearch_alert
+      dbname: opensearch_alert
+      max_connections: 50
+      max_idle_connections: 10
+      params: "charset=utf8mb4&parseTime=true&loc=Local"
+
+    # 后台管理用户
+    auth:
+        enabled: true
+        session_timeout: 3600
+        users:
+            - username: admin
+              password: TianXiang2099637909!@#
+              role: admin
+            - username: viewer
+              password: viewer123
+              role: viewer
+
+    # 规则配置
+    rules:
+        rules_folder: ./rules/
+        default_timeframe: 300
+        default_threshold: 1
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opensearch-alert-rules
+  namespace: k8s-app
+  labels:
+    app: opensearch-alert
+    version: "v2.0.0"
+data:
+  pod_events.yaml: |
+    # Pod 异常事件告警
+    name: "Pod 异常事件告警"
+    type: "frequency"
+    index: "ks-whizard-events-*"
+    threshold: 1            # 触发阈值
+    timeframe: 60           # 时间窗口(秒)
+    query_key:
+      - "@timestamp"
+      - "involvedObject.name"
+    realert: 5
+    alert:
+      - "email"
+      - "dingtalk"
+      - "wechat"
+      - "feishu"
+    alert_text: "Pod 发生异常事件"
+    level: ""               # 留空=自动判级；也可写 High/Critical 等
+    enabled: true
+    query:
+        bool:
+            must:
+                - term:
+                    type: Warning
+                - bool:
+                    minimum_should_match: 1
+                    should:
+                        - term:
+                            reason: BackOff
+                        - term:
+                            reason: Failed
+                        - term:
+                            reason: Unhealthy
+                        - term:
+                            reason: FailedMount
+                        - term:
+                            reason: FailedAttachVolume
+  error_logs.yaml: |
+    # 应用Pod错误日志告警规则
+    # 监控应用Pod中的错误日志，包括ERROR、FATAL、Exception等
+    name: "应用Pod错误日志告警"        # 规则名称，用于标识和显示
+    type: "frequency"                 # 规则类型：frequency（频率型）
+    index: "ks-whizard-logging-*"     # 监控的OpenSearch索引模式
+    threshold: 10                   # 触发阈值：匹配1条记录即触发告警
+    timeframe: 300                    # 时间窗口：5分钟内
+    query_key:                        # 查询键，用于去重和分组
+      - "@timestamp"                  # 时间戳字段
+      - "log"                         # 日志内容字段
+    realert: 10                       # 重复告警间隔：10分钟
+    alert:                            # 启用的通知渠道
+      - "email"                       # 邮件通知
+      - "dingtalk"                    # 钉钉通知
+      - "wechat"                      # 企业微信通知
+      - "feishu"                      # 飞书通知
+    alert_text: "应用Pod出现错误日志"  # 告警文本描述
+    level: "High"                     # 告警级别：高优先级，会@用户
+    enabled: true                     # 是否启用此规则
+    # OpenSearch 查询条件
+    query:
+      bool:
+        must:                        # 必须匹配的条件
+          - bool:
+              should:                # 至少匹配其中一个条件
+                - match:
+                    log: "ERROR"     # 错误日志
+                - match:
+                    log: "FATAL"     # 致命错误
+                - match:
+                    log: "Exception" # 异常信息
+                - match:
+                    log: "stacktrace" # 堆栈跟踪
+                - match:
+                    log: "panic"     # 程序崩溃
+              minimum_should_match: 1 # 至少匹配1个条件
+        must_not:                    # 必须不匹配的条件（排除条件）
+          - match:
+              log: "INFO"            # 排除INFO级别日志
+          # 排除系统组件日志，只监控应用Pod日志
+          - match:
+              "kubernetes.container_name": "dockerd"           # Docker守护进程
+          - match:
+              "kubernetes.container_name": "kubelet"           # Kubelet组件
+          - match:
+              "kubernetes.container_name": "kube-apiserver"    # API服务器
+          - match:
+              "kubernetes.container_name": "kube-controller-manager" # 控制器管理器
+          - match:
+              "kubernetes.container_name": "kube-scheduler"    # 调度器
+          - match:
+              "kubernetes.container_name": "kube-proxy"        # 网络代理
+          - match:
+              "kubernetes.container_name": "coredns"           # DNS服务
+          - match:
+              "kubernetes.container_name": "etcd"              # etcd存储
+          - match:
+              "kubernetes.container_name": "calico-node"       # Calico网络
+          - match:
+              "kubernetes.container_name": "calico-kube-controllers" # Calico控制器
+          - match:
+              "kubernetes.container_name": "prometheus"        # Prometheus监控
+          - match:
+              "kubernetes.container_name": "grafana"           # Grafana仪表板
+          - match:
+              "kubernetes.container_name": "ks-controller-manager" # KubeSphere控制器
+          - match:
+              "kubernetes.container_name": "ks-apiserver"      # KubeSphere API
+          - match:
+              "kubernetes.container_name": "ks-console"        # KubeSphere控制台
+          - match:
+              "kubernetes.container_name": "scope-agent"       # Weave Scope代理
+          - match:
+              "kubernetes.container_name": "fluent-bit"        # 日志收集插件
+
+  security_events.yaml: |
+    # 安全事件告警规则
+    # 监控Kubernetes安全审计事件，包括敏感资源操作、权限变更等
+    name: "安全审计告警"                # 规则名称，用于标识和显示
+    type: "any"                       # 规则类型：any（任意型，匹配到即触发）
+    index: "ks-whizard-auditing-*"    # 监控的OpenSearch索引模式
+    threshold: 1                      # 触发阈值：匹配1条记录即触发告警
+    timeframe: 60                     # 时间窗口：1分钟内
+    query_key:                        # 查询键，用于去重和分组
+      - "@timestamp"                  # 时间戳字段
+      - "AuditID"                     # 审计ID字段
+    realert: 0                        # 重复告警间隔：0分钟（立即告警）
+    alert:                            # 启用的通知渠道
+      - "email"                       # 邮件通知
+      - "dingtalk"                    # 钉钉通知
+      - "wechat"                      # 企业微信通知
+      - "feishu"                      # 飞书通知
+    alert_text: "检测到安全相关操作"    # 告警文本描述
+    level: "Critical"                 # 告警级别：严重，会@用户
+    enabled: true                     # 是否启用此规则
+    query:
+      bool:
+        must:
+          - bool:
+              should:
+                - term:
+                    Level: "Error"
+                - term:
+                    Verb: "delete"
+                - term:
+                    Verb: "create"
+                - term:
+                    Verb: "update"
+              minimum_should_match: 1
+          - bool:
+              should:
+                - term:
+                    "ObjectRef.Resource": "secrets"
+                - term:
+                    "ObjectRef.Resource": "configmaps"
+                - term:
+                    "ObjectRef.Resource": "roles"
+                - term:
+                    "ObjectRef.Resource": "rolebindings"
+              minimum_should_match: 1
+
+  system_components_logs.yaml: |
+    # 系统组件错误日志告警规则
+    # 监控Kubernetes系统组件的错误日志，包括kubelet、dockerd、etcd等核心组件
+    name: "系统组件错误日志告警"        # 规则名称，用于标识和显示
+    type: "frequency"                 # 规则类型：frequency（频率型）
+    index: "ks-whizard-logging-*"     # 监控的OpenSearch索引模式
+    threshold: 50                     # 触发阈值：5分钟内匹配50条记录即触发告警
+    timeframe: 300                    # 时间窗口：5分钟内
+    query_key:                        # 查询键，用于去重和分组
+      - "@timestamp"                  # 时间戳字段
+      - "log"                         # 日志内容字段
+    realert: 5                        # 重复告警间隔：5分钟
+    alert:                            # 启用的通知渠道
+      - "email"                       # 邮件通知
+      - "dingtalk"                    # 钉钉通知
+      - "wechat"                      # 企业微信通知
+      - "feishu"                      # 飞书通知
+    alert_text: "系统组件出现错误日志"  # 告警文本描述
+    level: "Critical"                 # 告警级别：严重，会@用户
+    enabled: true                     # 是否启用此规则
+    query:
+      bool:
+        must:
+          - bool:
+              should:
+                - match:
+                    log: "ERROR"
+                - match:
+                    log: "FATAL"
+                - match:
+                    log: "Exception"
+                - match:
+                    log: "stacktrace"
+                - match:
+                    log: "panic"
+              minimum_should_match: 1
+          # 只包含系统组件日志
+          - bool:
+              should:
+                - term:
+                    "kubernetes.container_name": "dockerd"
+                - term:
+                    "kubernetes.container_name": "kubelet"
+                - term:
+                    "kubernetes.container_name": "kube-apiserver"
+                - term:
+                    "kubernetes.container_name": "kube-controller-manager"
+                - term:
+                    "kubernetes.container_name": "kube-scheduler"
+                - term:
+                    "kubernetes.container_name": "kube-proxy"
+                - term:
+                    "kubernetes.container_name": "coredns"
+                - term:
+                    "kubernetes.container_name": "etcd"
+                - term:
+                    "kubernetes.container_name": "calico-node"
+                - term:
+                    "kubernetes.container_name": "calico-kube-controllers"
+                - term:
+                    "kubernetes.container_name": "prometheus"
+                - term:
+                    "kubernetes.container_name": "grafana"
+                - term:
+                    "kubernetes.container_name": "ks-controller-manager"
+                - term:
+                    "kubernetes.container_name": "ks-apiserver"
+                - term:
+                    "kubernetes.container_name": "ks-console"
+                - term:
+                    "kubernetes.container_name": "scope-agent"
+              minimum_should_match: 1
+        must_not:
+          - match:
+              log: "INFO"
+
+  warning_logs.yaml: |
+    name: 应用Pod警告日志告警
+    type: frequency
+    index: ks-whizard-logging-*
+    threshold: 10
+    timeframe: 300
+    query_key:
+        - '@timestamp'
+        - log
+    realert: 10
+    alert:
+        - email
+        - dingtalk
+        - wechat
+        - feishu
+    alert_text: 应用Pod出现警告日志
+    alert_text_args: []
+    level: Medium
+    enabled: true
+    query:
+        bool:
+            must:
+                - bool:
+                    minimum_should_match: 1
+                    should:
+                        - match:
+                            log: WARN
+                        - match:
+                            log: WARNING
+            must_not:
+                - match:
+                    log: INFO
+                - match:
+                    log: ERROR
+                - match:
+                    log: FATAL
+                - match:
+                    kubernetes.container_name: dockerd
+                - match:
+                    kubernetes.container_name: kubelet
+                - match:
+                    kubernetes.container_name: kube-apiserver
+                - match:
+                    kubernetes.container_name: kube-controller-manager
+                - match:
+                    kubernetes.container_name: kube-scheduler
+                - match:
+                    kubernetes.container_name: kube-proxy
+                - match:
+                    kubernetes.container_name: coredns
+                - match:
+                    kubernetes.container_name: etcd
+                - match:
+                    kubernetes.container_name: calico-node
+                - match:
+                    kubernetes.container_name: calico-kube-controllers
+                - match:
+                    kubernetes.container_name: prometheus
+                - match:
+                    kubernetes.container_name: grafana
+                - match:
+                    kubernetes.container_name: ks-controller-manager
+                - match:
+                    kubernetes.container_name: ks-apiserver
+                - match:
+                    kubernetes.container_name: ks-console
+                - match:
+                    kubernetes.container_name: scope-agent
+                - match:
+                    kubernetes.container_name: fluent-bit

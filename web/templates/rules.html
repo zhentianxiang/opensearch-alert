@@ -1,0 +1,169 @@
+{{template "base.html" .}}
+
+{{define "content"}}
+<!-- 规则统计 -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title text-primary">{{len .Rules}}</h5>
+                <p class="card-text">总规则数</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title text-success" id="enabledRules">0</h5>
+                <p class="card-text">启用规则</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title text-warning" id="disabledRules">0</h5>
+                <p class="card-text">禁用规则</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title text-info" id="ruleTypes">0</h5>
+                <p class="card-text">规则类型</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 规则列表 -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h6 class="m-0 font-weight-bold text-primary">规则列表</h6>
+                <div>
+                    <button class="btn btn-sm btn-primary" onclick="refreshRules()">
+                        <i class="bi bi-arrow-clockwise"></i> 刷新
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div id="rulesContainer">
+                    <div class="text-center">
+                        <div class="spinner-border" role="status">
+                            <span class="visually-hidden">加载中...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 规则详情模态框 -->
+<div class="modal fade" id="ruleDetailModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">规则详情</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="ruleDetailContent">
+                <!-- 详情内容将通过 JavaScript 填充 -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                <button type="button" class="btn btn-primary" onclick="editRule()">编辑</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 添加/编辑规则模态框 -->
+<div class="modal fade" id="ruleEditModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="ruleEditTitle">添加规则</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="ruleEditForm">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="ruleName" class="form-label">规则名称</label>
+                                <input type="text" class="form-control" id="ruleName" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="ruleType" class="form-label">规则类型</label>
+                                <select class="form-select" id="ruleType" required>
+                                    <option value="frequency">频率型 (frequency)</option>
+                                    <option value="any">任意型 (any)</option>
+                                    <option value="spike">突增型 (spike)</option>
+                                    <option value="flatline">突降型 (flatline)</option>
+                                    <option value="change">变化型 (change)</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label for="ruleIndex" class="form-label">监控索引</label>
+                                <input type="text" class="form-control" id="ruleIndex" placeholder="ks-whizard-logging-*" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="ruleThreshold" class="form-label">触发阈值</label>
+                                <input type="number" class="form-control" id="ruleThreshold" value="1" min="1" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="ruleTimeframe" class="form-label">时间窗口 (秒)</label>
+                                <input type="number" class="form-control" id="ruleTimeframe" value="300" min="1" required>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="ruleLevel" class="form-label">告警级别</label>
+                                <select class="form-select" id="ruleLevel">
+                                    <option value="">自动判断</option>
+                                    <option value="Critical">Critical (严重)</option>
+                                    <option value="High">High (高优先级)</option>
+                                    <option value="Medium">Medium (中等优先级)</option>
+                                    <option value="Low">Low (低优先级)</option>
+                                    <option value="Info">Info (信息)</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label for="ruleEnabled" class="form-label">状态</label>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="ruleEnabled" checked>
+                                    <label class="form-check-label" for="ruleEnabled">启用规则</label>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label for="ruleRealert" class="form-label">重复告警间隔 (分钟)</label>
+                                <input type="number" class="form-control" id="ruleRealert" value="5" min="0">
+                            </div>
+                            <div class="mb-3">
+                                <label for="ruleAlertText" class="form-label">告警文本</label>
+                                <input type="text" class="form-control" id="ruleAlertText" placeholder="规则描述">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="ruleQuery" class="form-label">OpenSearch 查询条件 (JSON)</label>
+                        <textarea class="form-control" id="ruleQuery" rows="10" placeholder='{"bool": {"must": [{"match": {"log": "ERROR"}}]}}'></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveRule()">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script src="/static/js/rules.js"></script>
+{{end}}
