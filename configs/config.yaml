@@ -24,27 +24,27 @@ notifications:
         smtp_server: smtp.qq.com
         smtp_port: 587
         username: 2099637909@qq.com
-        password: axfemcfxzkspcheb
+        password: xxxxxxxxxxxxxxxxxxxx
         from_email: 2099637909@qq.com
-        to_emails: []
+        to_emails: [2099637909@qq.com]
         use_tls: true
     dingtalk:
         enabled: false
-        webhook_url: https://oapi.dingtalk.com/robot/send?access_token=3b270c49f421b589749d4ce9dea8b9eafda7cc08d94bbefc98e34051b7f017c5
-        secret: SECbd1123d0b434ac3dbd4f1f118f6148bafa392090699e87eb02012953bf2aeeed
+        webhook_url: https://oapi.dingtalk.com/robot/send?access_token=xxxxxxxxxxxxxxxxx
+        secret: xxxxxxxxxxxxxxxxxxx
         at_mobiles:
-            - "18332825309"
+            - "1833282xxxx"
         at_all: false
     wechat:
         enabled: false
-        webhook_url: https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=5f7c6145-47f9-441c-a020-f92b543a3aad
+        webhook_url: https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxxxxxxxxxxxxxxxxxxxxx
         mentioned_list: []
         mentioned_mobile_list:
-            - "18332825309"
+            - "1833282xxxx"
         at_all: false
     feishu:
         enabled: true
-        webhook_url: https://open.feishu.cn/open-apis/bot/v2/hook/a06d5b36-a9d2-4408-a1dc-5ba73810b20c
+        webhook_url: https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxxxxxxxxxxxxxxxx
         secret: ""
         at_mobiles: []
         at_all: true
