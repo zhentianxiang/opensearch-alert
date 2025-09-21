@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"opensearch-alert/pkg/types"
+	"regexp"
 	"strings"
 
 	"github.com/sirupsen/logrus"
@@ -66,15 +67,15 @@ func (w *WeChatNotifier) Send(alert *types.Alert) error {
 
 // buildWeChatMessage 构建企业微信消息
 func (w *WeChatNotifier) buildWeChatMessage(alert *types.Alert) map[string]interface{} {
-	// 构建文本内容，使用纯文本格式
-	content := fmt.Sprintf("🚨 KubeSphere-OpenSearch 告警通知\n\n"+
-		"规则名称: %s\n"+
-		"告警级别: %s\n"+
-		"触发时间: %s\n"+
-		"匹配数量: %d\n\n"+
-		"----------------------------------------\n\n"+
-		"%s",
-		alert.RuleName, alert.Level,
+	// 构建文本内容，使用表情+标签格式，并包含简要详情
+	content := fmt.Sprintf("%s KubeSphere-OpenSearch 告警通知\n\n"+
+		"🏷️ 规则: %s\n"+
+		"%s 级别: %s\n"+
+		"🕒 时间: %s\n"+
+		"📈 匹配: %d\n\n"+
+		"📝 详情:\n%s",
+		w.getLevelEmoji(alert.Level), alert.RuleName,
+		w.getLevelEmoji(alert.Level), alert.Level,
 		alert.Timestamp.Format("2006-01-02 15:04:05"),
 		alert.Count, w.formatMessageContent(alert.Message))
 
@@ -129,17 +130,39 @@ func (w *WeChatNotifier) formatMessageContent(message string) string {
 	// 移除代码块标记 ``` -> 空行
 	formatted = strings.ReplaceAll(formatted, "```", "")
 
-	// 移除分隔线标记 --- -> 分隔线
-	formatted = strings.ReplaceAll(formatted, "---", "-----------------------------------")
+	// 移除分隔线标记 '---' 以及日志中仅由横线组成的分割线
+	formatted = strings.ReplaceAll(formatted, "---", "")
+	hyphenDivider := regexp.MustCompile(`(?m)^\s*-{6,}\s*$`)
+	formatted = hyphenDivider.ReplaceAllString(formatted, "")
 
-	// 清理多余的空行
-	formatted = strings.ReplaceAll(formatted, "\n\n\n", "\n\n")
+	// 清理多余的空行（将3个及以上连续换行压缩为2个）
+	multiEmptyLines := regexp.MustCompile(`\n{3,}`)
+	formatted = multiEmptyLines.ReplaceAllString(formatted, "\n\n")
 
 	// 确保开头和结尾没有多余的空行
 	formatted = strings.TrimSpace(formatted)
 
 	return formatted
 }
+
+// getLevelEmoji 不同级别对应的图标
+func (w *WeChatNotifier) getLevelEmoji(level string) string {
+	switch level {
+	case "Critical":
+		return "🚨"
+	case "High":
+		return "🚩"
+	case "Medium":
+		return "🔔"
+	case "Low", "Info":
+		return "ℹ️"
+	default:
+		return "🔔"
+	}
+}
+
+// extractK8sInfo 从 alert.Data.sample_hit 中提取 K8s 相关信息
+// 原格式化函数保留以便将来启用消息详情时复用
 
 // shouldAtUser 判断是否应该@用户
 func (w *WeChatNotifier) shouldAtUser(level string) bool {

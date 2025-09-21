@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"opensearch-alert/pkg/types"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -97,17 +98,19 @@ func (d *DingTalkNotifier) buildDingTalkMessage(alert *types.Alert) map[string]i
 		}
 	}
 
-	// 构建Markdown内容
-	markdown := fmt.Sprintf("🚨 **KubeSphere-OpenSearch 告警通知**\n\n"+
-		"**规则名称:** %s\n"+
-		"**告警级别:** %s\n"+
-		"**触发时间:** %s\n"+
-		"**匹配数量:** %d\n\n"+
-		"---\n\n"+
-		"%s",
-		alert.RuleName, alert.Level,
+	// 构建Markdown内容（表情+标签），并追加详情
+	markdown := fmt.Sprintf("**%s KubeSphere-OpenSearch 告警通知**\n\n"+
+		"🏷️ **规则名称:** %s\n"+
+		"%s **告警级别:** %s\n"+
+		"🕒 **触发时间:** %s\n"+
+		"📈 **匹配数量:** %d\n\n"+
+		"📝 **详情:**\n%s",
+		d.getLevelEmoji(alert.Level),
+		alert.RuleName,
+		d.getLevelEmoji(alert.Level), alert.Level,
 		alert.Timestamp.Format("2006-01-02 15:04:05"),
-		alert.Count, alert.Message)
+		alert.Count,
+		d.formatMessageContent(alert.Message))
 
 	// 处理消息内容，确保在钉钉中正确显示
 	// 钉钉 Markdown 需要在换行符前后各添加两个空格才能正确换行
@@ -130,6 +133,41 @@ func (d *DingTalkNotifier) buildDingTalkMessage(alert *types.Alert) map[string]i
 	}
 
 	return message
+}
+
+// getLevelEmoji 不同级别对应的图标
+func (d *DingTalkNotifier) getLevelEmoji(level string) string {
+	switch level {
+	case "Critical":
+		return "🚨"
+	case "High":
+		return "🚩"
+	case "Medium":
+		return "🔔"
+	case "Low", "Info":
+		return "ℹ️"
+	default:
+		return "🔔"
+	}
+}
+
+// formatMessageContent 钉钉Markdown兼容处理：移除分隔线、代码块标记并压缩空行
+func (d *DingTalkNotifier) formatMessageContent(message string) string {
+	formatted := message
+
+	// 去掉代码块围栏，保留内容
+	formatted = strings.ReplaceAll(formatted, "```", "")
+
+	// 移除 '---' 和仅由横线组成的整行
+	formatted = strings.ReplaceAll(formatted, "---", "")
+	hyphenDivider := regexp.MustCompile(`(?m)^\s*-{6,}\s*$`)
+	formatted = hyphenDivider.ReplaceAllString(formatted, "")
+
+	// 压缩多余空行到最多两个
+	multiEmpty := regexp.MustCompile(`\n{3,}`)
+	formatted = multiEmpty.ReplaceAllString(formatted, "\n\n")
+
+	return strings.TrimSpace(formatted)
 }
 
 // shouldAtUser 判断是否应该@用户

@@ -154,12 +154,12 @@ func (te *TemplateEngine) buildLoggingAlertMessage(rule types.AlertRule, respons
 	}
 
 	// 构建日志信息
-	logInfo := fmt.Sprintf("\n**示例日志时间:** %s\n"+
-		"**示例错误日志:** \n"+
+	logInfo := fmt.Sprintf("\n**日志时间:** %s\n"+
+		"**错误日志:** \n"+
 		"```\n"+
 		"%s\n"+
 		"```\n"+
-		"> 以上仅为1条示例日志，实际匹配了%d条错误日志",
+		"以上仅为1条示例日志，实际匹配了%d条错误日志",
 		timestamp, log, response.Hits.Total.Value)
 
 	return baseInfo + podInfo + logInfo
@@ -229,12 +229,12 @@ func (te *TemplateEngine) buildSystemComponentLoggingAlertMessage(rule types.Ale
 	}
 
 	// 构建日志信息
-	logInfo := fmt.Sprintf("\n**示例日志时间:** %s\n"+
-		"**示例错误日志:** \n"+
+	logInfo := fmt.Sprintf("\n**日志时间:** %s\n"+
+		"**错误日志:** \n"+
 		"```\n"+
 		"%s\n"+
 		"```\n"+
-		"> 以上仅为1条示例日志，实际匹配了%d条系统组件错误日志",
+		"以上仅为1条示例日志，实际匹配了%d条系统组件错误日志",
 		timestamp, log, response.Hits.Total.Value)
 
 	return baseInfo + componentInfo + logInfo

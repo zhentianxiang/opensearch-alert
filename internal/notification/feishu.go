@@ -98,37 +98,37 @@ func (f *FeishuNotifier) buildFeishuMessage(alert *types.Alert) map[string]inter
 			"header": map[string]interface{}{
 				"title": map[string]interface{}{
 					"tag":     "plain_text",
-					"content": "🚨 KubeSphere-OpenSearch 告警通知",
+					"content": fmt.Sprintf("%s KubeSphere-OpenSearch 告警通知", f.getLevelEmoji(alert.Level)),
 				},
-				"template": "red",
+				"template": f.getTemplateByLevel(alert.Level),
 			},
 			"elements": []map[string]interface{}{
 				{
 					"tag": "div",
 					"text": map[string]interface{}{
 						"tag":     "lark_md",
-						"content": fmt.Sprintf("**规则名称:** %s", alert.RuleName),
+						"content": fmt.Sprintf("🏷️ **规则名称:** %s", alert.RuleName),
 					},
 				},
 				{
 					"tag": "div",
 					"text": map[string]interface{}{
 						"tag":     "lark_md",
-						"content": fmt.Sprintf("**告警级别:** %s", alert.Level),
+						"content": fmt.Sprintf("%s **告警级别:** %s", f.getLevelEmoji(alert.Level), alert.Level),
 					},
 				},
 				{
 					"tag": "div",
 					"text": map[string]interface{}{
 						"tag":     "lark_md",
-						"content": fmt.Sprintf("**触发时间:** %s", alert.Timestamp.Format("2006-01-02 15:04:05")),
+						"content": fmt.Sprintf("🕒 **触发时间:** %s", alert.Timestamp.Format("2006-01-02 15:04:05")),
 					},
 				},
 				{
 					"tag": "div",
 					"text": map[string]interface{}{
 						"tag":     "lark_md",
-						"content": fmt.Sprintf("**匹配数量:** %d", alert.Count),
+						"content": fmt.Sprintf("📈 **匹配数量:** %d", alert.Count),
 					},
 				},
 				{
@@ -183,6 +183,68 @@ func (f *FeishuNotifier) formatMessageContent(message string) string {
 	formatted = strings.TrimSpace(formatted)
 
 	return formatted
+}
+
+// getTemplateByLevel 根据级别返回卡片主题色
+func (f *FeishuNotifier) getTemplateByLevel(level string) string {
+	switch level {
+	case "Critical":
+		return "red"
+	case "High":
+		return "orange"
+	case "Medium":
+		return "yellow"
+	case "Low":
+		return "green"
+	case "Info":
+		return "blue"
+	default:
+		return "red"
+	}
+}
+
+// getLevelEmoji 不同级别对应的图标
+func (f *FeishuNotifier) getLevelEmoji(level string) string {
+	switch level {
+	case "Critical":
+		return "🚨"
+	case "High":
+		return "🚩"
+	case "Medium":
+		return "🔔"
+	case "Low", "Info":
+		return "ℹ️"
+	default:
+		return "🔔"
+	}
+}
+
+// extractK8sInfo 提取K8s相关字段
+func (f *FeishuNotifier) extractK8sInfo(alert *types.Alert) (podName, namespace, containerName, containerImage string) {
+	if alert == nil || alert.Data == nil {
+		return "", "", "", ""
+	}
+	sample, ok := alert.Data["sample_hit"].(map[string]interface{})
+	if !ok {
+		return "", "", "", ""
+	}
+	kube, ok := sample["kubernetes"].(map[string]interface{})
+	if !ok {
+		return "", "", "", ""
+	}
+	if v, ok := kube["pod_name"].(string); ok {
+		podName = v
+	}
+	if v, ok := kube["namespace_name"].(string); ok {
+		namespace = v
+	}
+	if v, ok := kube["container_name"].(string); ok {
+		containerName = v
+	}
+	if v, ok := kube["container_image"].(string); ok {
+		containerImage = v
+	}
+	return
 }
 
 // shouldAtUser 判断是否应该@用户

@@ -2,6 +2,7 @@ package notification
 
 import (
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"opensearch-alert/pkg/types"
 	"strings"
@@ -75,6 +76,52 @@ func (e *EmailNotifier) Send(alert *types.Alert) error {
 func (e *EmailNotifier) buildEmailBody(alert *types.Alert) string {
 	// 格式化告警消息，处理Markdown格式
 	formattedMessage := e.formatMessageContent(alert.Message)
+	headerBg, headerBorder := e.getHeaderColors(alert.Level)
+	levelEmoji := e.getLevelEmoji(alert.Level)
+	levelClass := e.getLevelClass(alert.Level)
+
+	// 提取并构建 K8s 信息块（如果存在）
+	podName, namespace, containerName, containerImage := e.extractK8sInfo(alert.Data)
+	k8sSection := ""
+	if podName != "" || namespace != "" || containerName != "" || containerImage != "" {
+		k8sSection = fmt.Sprintf(`
+        <div class="field %s">
+            <span class="label">Kubernetes 信息:</span>
+            <div class="value">
+                %s
+                %s
+                %s
+                %s
+            </div>
+        </div>
+        `,
+			levelClass,
+			func() string {
+				if podName == "" {
+					return ""
+				}
+				return fmt.Sprintf("<div>📦 Pod 名称: %s</div>", podName)
+			}(),
+			func() string {
+				if namespace == "" {
+					return ""
+				}
+				return fmt.Sprintf("<div>📁 命名空间: %s</div>", namespace)
+			}(),
+			func() string {
+				if containerName == "" {
+					return ""
+				}
+				return fmt.Sprintf("<div>🐳 容器名称: %s</div>", containerName)
+			}(),
+			func() string {
+				if containerImage == "" {
+					return ""
+				}
+				return fmt.Sprintf("<div>🖼️ 容器镜像: %s</div>", containerImage)
+			}(),
+		)
+	}
 
 	return fmt.Sprintf(`
 <!DOCTYPE html>
@@ -90,15 +137,23 @@ func (e *EmailNotifier) buildEmailBody(alert *types.Alert) string {
             color: #333;
         }
         .header { 
-            background-color: #f8d7da; 
-            border: 1px solid #f5c6cb; 
-            padding: 20px; 
-            border-radius: 8px;
+            padding: 16px 20px; 
+            border-radius: 10px;
             margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
         }
         .header h2 {
             margin: 0;
             color: #721c24;
+        }
+        .level-badge {
+            font-size: 13px;
+            padding: 4px 8px;
+            border-radius: 999px;
+            background: rgba(0,0,0,0.06);
+            color: #333;
         }
         .content { 
             margin: 20px 0; 
@@ -157,32 +212,34 @@ func (e *EmailNotifier) buildEmailBody(alert *types.Alert) string {
     </style>
 </head>
 <body>
-    <div class="header">
-        <h2>🚨 KubeSphere-OpenSearch 告警通知</h2>
+    <div class="header" style="background-color: %s; border: 1px solid %s;">
+        <h2>%s KubeSphere-OpenSearch 告警通知</h2>
+        <span class="level-badge">级别: %s</span>
     </div>
     
     <div class="content">
-        <div class="field level-%s">
-            <span class="label">规则名称:</span>
+        <div class="field %s">
+            <span class="label">🏷️ 规则名称:</span>
             <span class="value">%s</span>
         </div>
-        <div class="field level-%s">
-            <span class="label">告警级别:</span>
+        <div class="field %s">
+            <span class="label">%s 告警级别:</span>
             <span class="value">%s</span>
         </div>
-        <div class="field level-%s">
-            <span class="label">触发时间:</span>
+        <div class="field %s">
+            <span class="label">🕒 触发时间:</span>
             <span class="value">%s</span>
         </div>
-        <div class="field level-%s">
-            <span class="label">匹配数量:</span>
+        <div class="field %s">
+            <span class="label">📈 匹配数量:</span>
             <span class="value">%d</span>
         </div>
         
-        <div class="field level-%s">
-            <span class="label">告警消息:</span>
+        <div class="field %s">
+            <span class="label">📝 告警消息:</span>
             <div class="message-content">%s</div>
         </div>
+        %s
         
         <div class="data">
             <h4>详细信息:</h4>
@@ -191,18 +248,26 @@ func (e *EmailNotifier) buildEmailBody(alert *types.Alert) string {
     </div>
 </body>
 </html>
-`, e.getLevelClass(alert.Level), alert.RuleName,
-		e.getLevelClass(alert.Level), alert.Level,
-		e.getLevelClass(alert.Level), alert.Timestamp.Format("2006-01-02 15:04:05"),
-		e.getLevelClass(alert.Level), alert.Count,
-		e.getLevelClass(alert.Level), formattedMessage,
+`, headerBg, headerBorder, levelEmoji, alert.Level,
+		levelClass, alert.RuleName,
+		levelClass, levelEmoji, alert.Level,
+		levelClass, alert.Timestamp.Format("2006-01-02 15:04:05"),
+		levelClass, alert.Count,
+		levelClass, formattedMessage,
+		k8sSection,
 		e.formatData(alert.Data))
 }
 
 // formatData 格式化数据
 func (e *EmailNotifier) formatData(data map[string]interface{}) string {
-	// 这里可以实现更复杂的数据格式化逻辑
-	return fmt.Sprintf("%+v", data)
+	if data == nil {
+		return "{}"
+	}
+	b, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return fmt.Sprintf("%+v", data)
+	}
+	return string(b)
 }
 
 // formatMessageContent 格式化消息内容，处理Markdown格式
@@ -306,6 +371,68 @@ func (e *EmailNotifier) getLevelClass(level string) string {
 	}
 }
 
+// getLevelEmoji 根据级别返回表情
+func (e *EmailNotifier) getLevelEmoji(level string) string {
+	switch strings.ToLower(level) {
+	case "critical":
+		return "🚨"
+	case "high":
+		return "🚩"
+	case "medium":
+		return "🔔"
+	case "low", "info":
+		return "ℹ️"
+	default:
+		return "🔔"
+	}
+}
+
+// getHeaderColors 根据级别返回标题背景色与边框色
+func (e *EmailNotifier) getHeaderColors(level string) (string, string) {
+	switch strings.ToLower(level) {
+	case "critical":
+		return "#fdecea", "#f5c6cb"
+	case "high":
+		return "#fff4e5", "#ffd7a8"
+	case "medium":
+		return "#fffbe6", "#ffe58f"
+	case "low":
+		return "#e8f5e9", "#a3e4b8"
+	case "info":
+		return "#e8f4fd", "#a3d0f7"
+	default:
+		return "#f8d7da", "#f5c6cb"
+	}
+}
+
+// extractK8sInfo 从 alert.Data.sample_hit 提取 K8s 相关信息
+func (e *EmailNotifier) extractK8sInfo(data map[string]interface{}) (podName, namespace, containerName, containerImage string) {
+	if data == nil {
+		return "", "", "", ""
+	}
+	sample, ok := data["sample_hit"].(map[string]interface{})
+	if !ok {
+		return "", "", "", ""
+	}
+	kube, ok := sample["kubernetes"].(map[string]interface{})
+	if !ok {
+		return "", "", "", ""
+	}
+	if v, ok := kube["pod_name"].(string); ok {
+		podName = v
+	}
+	if v, ok := kube["namespace_name"].(string); ok {
+		namespace = v
+	}
+	if v, ok := kube["container_name"].(string); ok {
+		containerName = v
+	}
+	if v, ok := kube["container_image"].(string); ok {
+		containerImage = v
+	}
+	return
+}
+
 // validateConfig 验证邮件配置
 func (e *EmailNotifier) validateConfig() error {
 	if e.config.SMTPServer == "" {
@@ -333,6 +460,5 @@ func (e *EmailNotifier) validateConfig() error {
 func (e *EmailNotifier) isQQMailError(err error) bool {
 	errStr := err.Error()
 	return e.config.SMTPServer == "smtp.qq.com" &&
-		(errStr == "535 Login fail. Account is abnormal, service is not open, password is incorrect, login frequency limited, or system is busy. More information at https://help.mail.qq.com/detail/108/1023" ||
-			errStr == "535 Login fail. Account is abnormal, service is not open, password is incorrect, login frequency limited, or system is busy. More information at https://help.mail.qq.com/detail/108/1023")
+		strings.HasPrefix(errStr, "535 Login fail")
 }
