@@ -8,7 +8,7 @@ metadata:
     version: "v3.5.0"
     component: "monitoring"
 spec:
-  replicas: 1
+  replicas: 3
   #strategy:
    # type: Recreate  # 单副本应用使用Recreate策略
   selector:
@@ -93,7 +93,7 @@ spec:
         configMap:
           name: opensearch-alert-config
           defaultMode: 0644
-      - name: rules
+      - name: data
         persistentVolumeClaim:
           claimName: opensearch-alert-data
       restartPolicy: Always

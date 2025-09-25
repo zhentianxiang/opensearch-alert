@@ -7,8 +7,9 @@ metadata:
     app: opensearch-alert
     version: "v3.5.0"
 spec:
+  storageClassName: nfs-provisioner-storage
   accessModes:
-    - ReadWriteOnce
+    - ReadWriteMany
   resources:
     requests:
       storage: 1Gi
