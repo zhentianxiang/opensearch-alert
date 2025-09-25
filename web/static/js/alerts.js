@@ -4,11 +4,7 @@
 
 class AlertsPage {
     constructor() {
-        this.currentFilters = {
-            rule: '',
-            level: '',
-            time: 24
-        };
+        this.currentFilters = { rule: '', level: '', time: 24 };
         this.refreshTimer = null;
         this.init();
     }
@@ -87,6 +83,7 @@ class AlertsPage {
         if (this.currentFilters.level) {
             params.append('level', this.currentFilters.level);
         }
+        // 无关键词/起止时间参数（恢复旧逻辑）
         // 分页参数
         params.append('page', this.currentPage || 1);
         params.append('page_size', this.pageSize || 10);

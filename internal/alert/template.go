@@ -1,8 +1,10 @@
 package alert
 
 import (
+	"encoding/json"
 	"fmt"
 	"opensearch-alert/pkg/types"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -20,6 +22,35 @@ func (te *TemplateEngine) BuildAlertMessage(rule types.AlertRule, response *type
 	// 根据索引类型确定事件类型
 	eventType := te.detectEventType(rule.Index)
 
+	// 若设置了自定义模板，则在自定义文本后追加系统默认详情，避免信息过少
+	if rule.AlertText != "" {
+		custom := te.buildCustomAlertMessage(rule, response)
+		var details string
+		switch eventType {
+		case "events":
+			details = te.buildEventAlertMessage(rule, response)
+		case "logging":
+			if strings.Contains(rule.Name, "系统组件") {
+				details = te.buildSystemComponentLoggingAlertMessage(rule, response)
+			} else {
+				details = te.buildLoggingAlertMessage(rule, response)
+			}
+		case "auditing":
+			details = te.buildAuditingAlertMessage(rule, response)
+		default:
+			details = te.buildDefaultAlertMessage(rule, response)
+		}
+		// 合并（自定义在上，详情在下）
+		if custom == "" {
+			return details
+		}
+		return custom + "\n\n" + details
+	}
+
+	// 未设置自定义模板时，走系统默认详情
+	// 根据索引类型确定事件类型
+	// eventType 已在上面计算
+
 	switch eventType {
 	case "events":
 		return te.buildEventAlertMessage(rule, response)
@@ -34,6 +65,47 @@ func (te *TemplateEngine) BuildAlertMessage(rule types.AlertRule, response *type
 	default:
 		return te.buildDefaultAlertMessage(rule, response)
 	}
+}
+
+// buildCustomAlertMessage 使用 AlertText/AlertTextArgs 构建自定义告警文本
+func (te *TemplateEngine) buildCustomAlertMessage(rule types.AlertRule, response *types.OpenSearchResponse) string {
+	text := rule.AlertText
+	var source map[string]interface{}
+	if len(response.Hits.Hits) > 0 {
+		source = response.Hits.Hits[0].Source
+	} else {
+		source = make(map[string]interface{})
+	}
+
+	// 占位符替换：支持 ${path.to.field}
+	placeholder := regexp.MustCompile(`\$\{([^}]+)\}`)
+	text = placeholder.ReplaceAllStringFunc(text, func(m string) string {
+		sub := placeholder.FindStringSubmatch(m)
+		if len(sub) < 2 {
+			return ""
+		}
+		val := te.getValueByPath(source, strings.TrimSpace(sub[1]))
+		return val
+	})
+
+	if len(rule.AlertTextArgs) == 0 {
+		return text
+	}
+
+	// 追加显示指定字段，便于上下文信息呈现
+	var b strings.Builder
+	b.WriteString(text)
+	b.WriteString("\n\n")
+	b.WriteString("数据字段:\n")
+	for _, path := range rule.AlertTextArgs {
+		p := strings.TrimSpace(path)
+		if p == "" {
+			continue
+		}
+		v := te.getValueByPath(source, p)
+		b.WriteString(fmt.Sprintf("- %s: %s\n", p, v))
+	}
+	return b.String()
 }
 
 // detectEventType 检测事件类型
@@ -307,6 +379,43 @@ func (te *TemplateEngine) getStringValue(data map[string]interface{}, key string
 		}
 	}
 	return ""
+}
+
+// getValueByPath 从嵌套 map 中按点路径获取值，并返回字符串
+func (te *TemplateEngine) getValueByPath(root map[string]interface{}, path string) string {
+	if path == "" {
+		return ""
+	}
+	parts := strings.Split(path, ".")
+	var cur interface{} = root
+	for _, part := range parts {
+		if m, ok := cur.(map[string]interface{}); ok {
+			cur = m[part]
+		} else {
+			return ""
+		}
+	}
+	switch v := cur.(type) {
+	case string:
+		return v
+	case float64:
+		return fmt.Sprintf("%v", v)
+	case int:
+		return fmt.Sprintf("%d", v)
+	case bool:
+		if v {
+			return "true"
+		}
+		return "false"
+	case nil:
+		return ""
+	default:
+		// 尝试序列化为 JSON
+		if b, err := json.Marshal(v); err == nil {
+			return string(b)
+		}
+		return ""
+	}
 }
 
 func (te *TemplateEngine) getIntValue(data map[string]interface{}, key string) int {

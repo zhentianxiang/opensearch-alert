@@ -29,12 +29,22 @@ var (
 func main() {
 	flag.Parse()
 
+	// 检测用户是否显式传入了 -rules 参数
+	rulesFlagProvided := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "rules" {
+			rulesFlagProvided = true
+		}
+	})
+
 	// 自动检测运行环境并设置默认路径
 	if *configPath == "./configs/config.yaml" {
 		// 检查容器环境
 		if _, err := os.Stat("/app/config/config.yaml"); err == nil {
 			*configPath = "/app/config/config.yaml"
-			*rulesPath = "/app/config/rules"
+			if !rulesFlagProvided {
+				*rulesPath = "/app/config/rules"
+			}
 		} else {
 			// 检查当前目录下的配置文件
 			if _, err := os.Stat("./configs/config.yaml"); err != nil {
@@ -44,14 +54,18 @@ func main() {
 				configFile := filepath.Join(exeDir, "configs", "config.yaml")
 				if _, err := os.Stat(configFile); err == nil {
 					*configPath = configFile
-					*rulesPath = filepath.Join(exeDir, "configs", "rules")
+					if !rulesFlagProvided {
+						*rulesPath = filepath.Join(exeDir, "configs", "rules")
+					}
 				} else {
 					// 最后尝试从可执行文件目录的上级目录查找
 					parentDir := filepath.Dir(exeDir)
 					configFile = filepath.Join(parentDir, "configs", "config.yaml")
 					if _, err := os.Stat(configFile); err == nil {
 						*configPath = configFile
-						*rulesPath = filepath.Join(parentDir, "configs", "rules")
+						if !rulesFlagProvided {
+							*rulesPath = filepath.Join(parentDir, "configs", "rules")
+						}
 					}
 				}
 			}
@@ -104,7 +118,16 @@ func main() {
 
 	logger.Info("🚀 启动 OpenSearch 告警工具...")
 	logger.Infof("📁 配置文件: %s", *configPath)
-	logger.Infof("📁 规则目录: %s", *rulesPath)
+	logger.Infof("📁 规则目录(参数): %s", *rulesPath)
+	// 若命令行未显式指定，优先使用配置中的 rules_folder
+	if !rulesFlagProvided && cfg.Rules.RulesFolder != "" {
+		*rulesPath = cfg.Rules.RulesFolder
+	}
+	// 将最终生效的规则目录同步到内存配置，确保 Web 管理页与引擎一致
+	if cfg.Rules.RulesFolder != *rulesPath {
+		cfg.Rules.RulesFolder = *rulesPath
+	}
+	logger.Infof("📁 规则目录(生效): %s", *rulesPath)
 	logger.Infof("🔧 日志级别: %s", cfg.Logging.Level)
 	if cfg.Logging.File != "" {
 		logger.Infof("📝 日志文件: %s", cfg.Logging.File)
@@ -141,11 +164,28 @@ func main() {
 
 	// 先加载规则并完成引擎初始化再创建通知器/发送测试
 
+	// 在加载前，先将内置规则引导写入目标目录（不覆盖已有文件）
+	if written, bootErr := config.BootstrapEmbeddedRules(*rulesPath, false, logger); bootErr != nil {
+		logger.Warnf("引导内置规则失败: %v", bootErr)
+	} else if written > 0 {
+		logger.Infof("🧩 已生成 %d 个内置规则", written)
+	}
+
 	// 加载告警规则
 	logger.Info("📋 加载告警规则...")
 	rules, err := config.LoadRules(*rulesPath)
 	if err != nil {
 		logger.Fatalf("❌ 加载告警规则失败: %v", err)
+	}
+
+	// 使用配置默认值回填缺失的 timeframe 与 threshold
+	for i := range rules {
+		if rules[i].Timeframe == 0 {
+			rules[i].Timeframe = cfg.Rules.DefaultTimeframe
+		}
+		if rules[i].Threshold == 0 {
+			rules[i].Threshold = cfg.Rules.DefaultThreshold
+		}
 	}
 
 	if len(rules) == 0 {
@@ -224,7 +264,7 @@ func main() {
 	var webServer *web.Server
 	if cfg.Web.Enabled {
 		logger.Info("🌐 启动 Web 服务器...")
-		webServer = web.NewServer(cfg, db, notifier, logger)
+		webServer = web.NewServer(cfg, db, notifier, alertEngine, logger)
 
 		go func() {
 			if err := webServer.Start(); err != nil {

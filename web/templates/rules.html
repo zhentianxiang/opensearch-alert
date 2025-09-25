@@ -35,6 +35,7 @@
             </div>
         </div>
     </div>
+
 </div>
 
 <!-- 规则列表 -->
@@ -112,11 +113,15 @@
                                 <input type="text" class="form-control" id="ruleIndex" placeholder="ks-whizard-logging-*" required>
                             </div>
                             <div class="mb-3">
-                                <label for="ruleThreshold" class="form-label">触发阈值</label>
+                                <label for="ruleThreshold" class="form-label">触发阈值
+                                    <i class="bi bi-question-circle ms-1" data-bs-toggle="tooltip" title="在设定的时间窗口内，匹配数量达到该阈值即触发告警"></i>
+                                </label>
                                 <input type="number" class="form-control" id="ruleThreshold" value="1" min="1" required>
                             </div>
                             <div class="mb-3">
-                                <label for="ruleTimeframe" class="form-label">时间窗口 (秒)</label>
+                                <label for="ruleTimeframe" class="form-label">时间窗口 (秒)
+                                    <i class="bi bi-question-circle ms-1" data-bs-toggle="tooltip" title="用于统计匹配数量的时间范围，例如 300=最近5分钟"></i>
+                                </label>
                                 <input type="number" class="form-control" id="ruleTimeframe" value="300" min="1" required>
                             </div>
                         </div>
@@ -140,12 +145,63 @@
                                 </div>
                             </div>
                             <div class="mb-3">
-                                <label for="ruleRealert" class="form-label">重复告警间隔 (分钟)</label>
+                                <label for="ruleRealert" class="form-label">重复告警间隔 (分钟)
+                                    <i class="bi bi-question-circle ms-1" data-bs-toggle="tooltip" title="同一规则连续触发时的最小间隔时间，用于抑制过于频繁的通知"></i>
+                                </label>
                                 <input type="number" class="form-control" id="ruleRealert" value="5" min="0">
                             </div>
                             <div class="mb-3">
-                                <label for="ruleAlertText" class="form-label">告警文本</label>
-                                <input type="text" class="form-control" id="ruleAlertText" placeholder="规则描述">
+                                <label for="ruleAlertText" class="form-label">告警文本
+                                    <i class="bi bi-question-circle ms-1" data-bs-toggle="tooltip" title="可自定义消息内容，支持 ${field.path} 占位符，如 ${kubernetes.pod_name}"></i>
+                                </label>
+                                <input type="text" class="form-control" id="ruleAlertText" placeholder="规则描述，如：Pod ${kubernetes.pod_name} 出现错误">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">通知渠道
+                                    <i class="bi bi-question-circle ms-1" data-bs-toggle="tooltip" title="触发告警后将通过这些渠道发送通知，默认全选"></i>
+                                </label>
+                                <div class="row g-2">
+                                    <div class="col-6">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="alertEmail" checked>
+                                            <label class="form-check-label" for="alertEmail">Email</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-6">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="alertDingTalk" checked>
+                                            <label class="form-check-label" for="alertDingTalk">钉钉</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-6">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="alertWeChat" checked>
+                                            <label class="form-check-label" for="alertWeChat">企业微信</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-6">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="alertFeishu" checked>
+                                            <label class="form-check-label" for="alertFeishu">飞书</label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label for="ruleAlertTextArgs" class="form-label">模板参数 (逗号分隔)
+                                    <i class="bi bi-question-circle ms-1" data-bs-toggle="tooltip" title="在告警文本下方追加显示这些字段的取值，便于上下文查看。如：kubernetes.namespace_name"></i>
+                                </label>
+                                <input type="text" class="form-control" id="ruleAlertTextArgs" placeholder="kubernetes.namespace_name, kubernetes.container_name">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="ruleQueryKey" class="form-label">去重键 Query Key (逗号分隔)
+                                    <i class="bi bi-question-circle ms-1" data-bs-toggle="tooltip" title="用于对告警进行分组去重；相同 Query Key 组合视为同类事件，减少重复通知"></i>
+                                </label>
+                                <input type="text" class="form-control" id="ruleQueryKey" value="@timestamp, involvedObject.name" placeholder="@timestamp, involvedObject.name">
                             </div>
                         </div>
                     </div>
@@ -166,4 +222,11 @@
 
 {{define "scripts"}}
 <script src="/static/js/rules.js"></script>
+<script>
+// 初始化 Bootstrap Tooltip
+const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+tooltipTriggerList.map(function (tooltipTriggerEl) {
+  return new bootstrap.Tooltip(tooltipTriggerEl)
+})
+</script>
 {{end}}

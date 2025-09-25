@@ -3,6 +3,10 @@ kind: Ingress
 metadata:
   name: opensearch-alert-ingress
   namespace: k8s-app
+  labels:
+    app: opensearch-alert
+    version: "v3.5.0"
+    component: "monitoring"
 spec:
   ingressClassName: nginx
   tls:

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"net/http"
+	"opensearch-alert/internal/alert"
 	"opensearch-alert/internal/database"
 	"opensearch-alert/internal/notification"
 	"opensearch-alert/pkg/types"
@@ -26,6 +28,7 @@ type Server struct {
 	config        *types.Config
 	database      *database.Database
 	notifier      *notification.Notifier
+	engine        *alert.Engine
 	logger        *logrus.Logger
 	store         *sessions.CookieStore
 	pageTemplates map[string]*template.Template
@@ -33,7 +36,7 @@ type Server struct {
 }
 
 // NewServer 创建 Web 服务器
-func NewServer(config *types.Config, database *database.Database, notifier *notification.Notifier, logger *logrus.Logger) *Server {
+func NewServer(config *types.Config, database *database.Database, notifier *notification.Notifier, engine *alert.Engine, logger *logrus.Logger) *Server {
 	// 注册User类型到gob编码器
 	gob.Register(&types.User{})
 
@@ -51,6 +54,7 @@ func NewServer(config *types.Config, database *database.Database, notifier *noti
 		config:        config,
 		database:      database,
 		notifier:      notifier,
+		engine:        engine,
 		logger:        logger,
 		store:         store,
 		pageTemplates: make(map[string]*template.Template),
@@ -460,7 +464,7 @@ func (s *Server) handleConfigPage(w http.ResponseWriter, r *http.Request) {
 
 // handleGetAlerts 获取告警列表
 func (s *Server) handleGetAlerts(w http.ResponseWriter, r *http.Request) {
-	// 解析查询参数
+	// 解析查询参数（旧逻辑：rule/level/hours + 分页）
 	ruleName := r.URL.Query().Get("rule")
 	level := r.URL.Query().Get("level")
 	limitStr := r.URL.Query().Get("limit")
@@ -635,6 +639,7 @@ func (s *Server) handleEnableRule(w http.ResponseWriter, r *http.Request) {
 		s.respondJSON(w, map[string]string{"error": err.Error()}, http.StatusInternalServerError)
 		return
 	}
+	s.reloadRules()
 	s.respondJSON(w, map[string]string{"message": "规则已启用"}, http.StatusOK)
 }
 
@@ -651,6 +656,7 @@ func (s *Server) handleDisableRule(w http.ResponseWriter, r *http.Request) {
 		s.respondJSON(w, map[string]string{"error": err.Error()}, http.StatusInternalServerError)
 		return
 	}
+	s.reloadRules()
 	s.respondJSON(w, map[string]string{"message": "规则已禁用"}, http.StatusOK)
 }
 
@@ -701,11 +707,22 @@ func (s *Server) handleUpsertRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 读取原始请求体，便于判断哪些字段真实提供了
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.respondJSON(w, map[string]string{"error": "读取请求失败"}, http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
 	var rule types.AlertRule
-	if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
+	if err := json.Unmarshal(body, &rule); err != nil {
 		s.respondJSON(w, map[string]string{"error": "无效的规则格式"}, http.StatusBadRequest)
 		return
 	}
+	// 记录原始键，用于保留未提交字段
+	var raw map[string]interface{}
+	_ = json.Unmarshal(body, &raw)
 	if rule.Name == "" {
 		s.respondJSON(w, map[string]string{"error": "规则名称不能为空"}, http.StatusBadRequest)
 		return
@@ -723,12 +740,12 @@ func (s *Server) handleUpsertRule(w http.ResponseWriter, r *http.Request) {
 	// 尝试在目录中查找同名规则的现有文件
 	var rulePath string
 	files, _ := filepath.Glob(filepath.Join(rulesDir, "*.yaml"))
+	var existing types.AlertRule
 	for _, f := range files {
 		b, err := os.ReadFile(f)
 		if err != nil {
 			continue
 		}
-		var existing types.AlertRule
 		if err := yaml.Unmarshal(b, &existing); err != nil {
 			continue
 		}
@@ -744,6 +761,19 @@ func (s *Server) handleUpsertRule(w http.ResponseWriter, r *http.Request) {
 		fileName = strings.ReplaceAll(fileName, "\\", "_")
 		rulePath = filepath.Join(rulesDir, fileName)
 	}
+
+	// 合并：对未在请求中出现的字段，保留旧文件中的值
+	if rulePath != "" && existing.Name == rule.Name {
+		if _, ok := raw["QueryKey"]; !ok && len(rule.QueryKey) == 0 && len(existing.QueryKey) > 0 {
+			rule.QueryKey = existing.QueryKey
+		}
+		if _, ok := raw["Alert"]; !ok && len(rule.Alert) == 0 && len(existing.Alert) > 0 {
+			rule.Alert = existing.Alert
+		}
+		if _, ok := raw["AlertTextArgs"]; !ok && len(rule.AlertTextArgs) == 0 && len(existing.AlertTextArgs) > 0 {
+			rule.AlertTextArgs = existing.AlertTextArgs
+		}
+	}
 	data, err := yaml.Marshal(&rule)
 	if err != nil {
 		s.respondJSON(w, map[string]string{"error": "序列化规则失败"}, http.StatusInternalServerError)
@@ -753,6 +783,9 @@ func (s *Server) handleUpsertRule(w http.ResponseWriter, r *http.Request) {
 		s.respondJSON(w, map[string]string{"error": "写入规则文件失败"}, http.StatusInternalServerError)
 		return
 	}
+
+	// 保存完成后热加载规则
+	s.reloadRules()
 
 	s.respondJSON(w, map[string]string{"message": "规则保存成功"}, http.StatusOK)
 }
@@ -1008,6 +1041,29 @@ func (s *Server) loadRules() ([]types.AlertRule, error) {
 		rules = append(rules, v.rule)
 	}
 	return rules, nil
+}
+
+// reloadRules 从当前规则目录加载并应用到告警引擎（填充默认值）
+func (s *Server) reloadRules() {
+	if s.engine == nil {
+		return
+	}
+	rules, err := s.loadRules()
+	if err != nil {
+		s.logger.Errorf("热加载规则失败: %v", err)
+		return
+	}
+	// 回填默认值
+	for i := range rules {
+		if rules[i].Timeframe == 0 {
+			rules[i].Timeframe = s.config.Rules.DefaultTimeframe
+		}
+		if rules[i].Threshold == 0 {
+			rules[i].Threshold = s.config.Rules.DefaultThreshold
+		}
+	}
+	s.engine.LoadRules(rules)
+	s.logger.Infof("规则热加载完成: %d 条", len(rules))
 }
 
 // respondJSON 响应 JSON

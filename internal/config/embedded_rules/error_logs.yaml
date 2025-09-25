@@ -1,6 +1,21 @@
 name: 应用Pod错误日志告警
 type: frequency
 index: ks-whizard-logging-*
+threshold: 10
+timeframe: 300
+query_key:
+  - "@timestamp"
+  - "involvedObject.name"
+realert: 5
+alert:
+  - "email"
+  - "dingtalk"
+  - "wechat"
+  - "feishu"
+alert_text: ${kubernetes.pod_name} 出现错误
+alert_text_args: []
+level: High
+enabled: true
 query:
     bool:
         must:
@@ -56,12 +71,3 @@ query:
                 kubernetes.container_name: fluent-bit
             - match:
                 kubernetes.container_name: log-simulator
-threshold: 10
-timeframe: 300
-query_key: []
-realert: 10
-alert: []
-alert_text: 应用Pod出现错误日志
-alert_text_args: []
-level: High
-enabled: true

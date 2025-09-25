@@ -1,22 +1,20 @@
-# 系统组件错误日志告警规则
-# 监控Kubernetes系统组件的错误日志，包括kubelet、dockerd、etcd等核心组件
-name: "系统组件错误日志告警"        # 规则名称，用于标识和显示
-type: "frequency"                 # 规则类型：frequency（频率型）
-index: "ks-whizard-logging-*"     # 监控的OpenSearch索引模式
-threshold: 50                     # 触发阈值：5分钟内匹配50条记录即触发告警
-timeframe: 300                    # 时间窗口：5分钟内
-query_key:                        # 查询键，用于去重和分组
-  - "@timestamp"                  # 时间戳字段
-  - "log"                         # 日志内容字段
-realert: 5                        # 重复告警间隔：5分钟
-alert:                            # 启用的通知渠道
-  - "email"                       # 邮件通知
-  - "dingtalk"                    # 钉钉通知
-  - "wechat"                      # 企业微信通知
-  - "feishu"                      # 飞书通知
-alert_text: "系统组件出现错误日志"  # 告警文本描述
-level: "Critical"                 # 告警级别：严重，会@用户
-enabled: true                     # 是否启用此规则
+name: "系统组件错误日志告警"
+type: "frequency"
+index: "ks-whizard-logging-*"
+threshold: 50
+timeframe: 300
+query_key:
+  - "@timestamp"
+  - "log"
+realert: 5
+alert:
+  - "email"
+  - "dingtalk"
+  - "wechat"
+  - "feishu"
+alert_text: "系统组件出现错误日志"
+level: "Critical"
+enabled: true
 query:
   bool:
     must:
@@ -33,7 +31,6 @@ query:
             - match:
                 log: "panic"
           minimum_should_match: 1
-      # 只包含系统组件日志
       - bool:
           should:
             - term:
@@ -72,3 +69,5 @@ query:
     must_not:
       - match:
           log: "INFO"
+
+

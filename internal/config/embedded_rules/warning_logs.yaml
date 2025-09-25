@@ -12,7 +12,7 @@ alert:
     - dingtalk
     - wechat
     - feishu
-alert_text: 应用Pod出现警告日志
+alert_text: ${kubernetes.pod_name} 出现错误
 alert_text_args: []
 level: Medium
 enabled: true
@@ -67,3 +67,5 @@ query:
                 kubernetes.container_name: scope-agent
             - match:
                 kubernetes.container_name: fluent-bit
+
+

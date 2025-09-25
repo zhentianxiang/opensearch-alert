@@ -266,6 +266,9 @@ type DashboardData struct {
 	User       *User       `json:"user"`
 }
 
+// AlertQueryOptions 告警查询选项（用于前后端灵活筛选）
+// (removed) AlertQueryOptions: 恢复旧版 API 仅支持 rule/level/hours
+
 // LoginRequest 登录请求
 type LoginRequest struct {
 	Username string `json:"username"`

@@ -5,7 +5,7 @@ metadata:
   namespace: k8s-app
   labels:
     app: opensearch-alert
-    version: "v2.0.0"
+    version: "v3.5.0"
     component: "monitoring"
 spec:
   replicas: 1
@@ -18,7 +18,7 @@ spec:
     metadata:
       labels:
         app: opensearch-alert
-        version: "v2.0.0"
+        version: "v3.5.0"
         component: "monitoring"
     spec:
       serviceAccountName: opensearch-alert
@@ -34,12 +34,12 @@ spec:
         effect: "NoSchedule"
       containers:
       - name: opensearch-alert
-        image: harbor.tianxiang.love:30443/k8s-app/opensearch-alert:v2.0.0
+        image: harbor.tianxiang.love:30443/k8s-app/opensearch-alert:v3.5.0
         imagePullPolicy: IfNotPresent
-        command: ["./opensearch-alert"]
+        command: ["/usr/local/bin/opensearch-alert"]
         args:
           - "-config=/app/configs/config.yaml"
-          - "-rules=/app/rules/"
+          - "-rules=/app/data/rules/"
         env:
         - name: TZ
           value: "Asia/Shanghai"
@@ -56,13 +56,11 @@ spec:
             cpu: "1000m"
         volumeMounts:
         - name: config
-          mountPath: /app/configs
+          mountPath: /app/configs/config.yaml"
+          subPath: config.yaml
           readOnly: true
-        - name: rules
-          mountPath: /app/rules
-          readOnly: true
-        - name: logs
-          mountPath: /app/logs/opensearch-alert
+        - name: data
+          mountPath: /app/data/
         livenessProbe:
           httpGet:
             path: /login
@@ -96,11 +94,7 @@ spec:
           name: opensearch-alert-config
           defaultMode: 0644
       - name: rules
-        configMap:
-          name: opensearch-alert-rules
-          defaultMode: 0644
-      - name: logs
-        emptyDir:
-          sizeLimit: 1Gi
+        persistentVolumeClaim:
+          claimName: opensearch-alert-data
       restartPolicy: Always
       terminationGracePeriodSeconds: 30

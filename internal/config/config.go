@@ -104,6 +104,9 @@ func setDefaults(config *types.Config) {
 	if config.Rules.DefaultThreshold == 0 {
 		config.Rules.DefaultThreshold = 1
 	}
+	if config.Rules.RulesFolder == "" {
+		config.Rules.RulesFolder = "configs/rules"
+	}
 
 	// Web 服务默认值
 	if config.Web.Host == "" {

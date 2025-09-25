@@ -233,6 +233,18 @@ class RulesPage {
         document.getElementById('ruleRealert').value = rule.Realert || 0;
         document.getElementById('ruleAlertText').value = rule.AlertText || '';
         document.getElementById('ruleQuery').value = JSON.stringify(rule.Query, null, 2);
+
+        // 新增字段填充
+        const alertList = (rule.Alert || []).map(x => (typeof x === 'string' ? x.toLowerCase() : x));
+        // 若规则未显式指定 Alert，则默认全选
+        const allChannels = ['email','dingtalk','wechat','feishu'];
+        document.getElementById('alertEmail').checked = alertList.length === 0 ? true : alertList.includes('email');
+        document.getElementById('alertDingTalk').checked = alertList.length === 0 ? true : alertList.includes('dingtalk');
+        document.getElementById('alertWeChat').checked = alertList.length === 0 ? true : alertList.includes('wechat');
+        document.getElementById('alertFeishu').checked = alertList.length === 0 ? true : alertList.includes('feishu');
+
+        document.getElementById('ruleAlertTextArgs').value = (rule.AlertTextArgs || []).join(', ');
+        document.getElementById('ruleQueryKey').value = (rule.QueryKey || []).join(', ');
         
         const bootstrapModal = new bootstrap.Modal(modal);
         bootstrapModal.show();
@@ -253,6 +265,24 @@ class RulesPage {
                 AlertText: document.getElementById('ruleAlertText').value || '',
                 Query: JSON.parse(document.getElementById('ruleQuery').value || '{}')
             };
+
+            // 采集通知渠道
+            const alerts = [];
+            if (document.getElementById('alertEmail').checked) alerts.push('email');
+            if (document.getElementById('alertDingTalk').checked) alerts.push('dingtalk');
+            if (document.getElementById('alertWeChat').checked) alerts.push('wechat');
+            if (document.getElementById('alertFeishu').checked) alerts.push('feishu');
+            if (alerts.length > 0) rule.Alert = alerts;
+
+            // 采集模板参数与去重键
+            const textArgs = (document.getElementById('ruleAlertTextArgs').value || '').split(',').map(s => s.trim()).filter(Boolean);
+            if (textArgs.length > 0) rule.AlertTextArgs = textArgs;
+            let queryKey = (document.getElementById('ruleQueryKey').value || '').split(',').map(s => s.trim()).filter(Boolean);
+            if (queryKey.length === 0) {
+                // 默认 Query Key
+                queryKey = ['@timestamp','involvedObject.name'];
+            }
+            rule.QueryKey = queryKey;
 
             const resp = await API.post('/rules', rule);
             if (resp && !resp.error) {

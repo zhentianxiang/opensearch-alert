@@ -5,7 +5,7 @@ metadata:
   namespace: k8s-app
   labels:
     app: opensearch-alert
-    version: "v2.0.0"
+    version: "v3.5.0"
     component: "monitoring"
 
 ---
@@ -15,7 +15,7 @@ metadata:
   name: opensearch-alert
   labels:
     app: opensearch-alert
-    version: "v2.0.0"
+    version: "v3.5.0"
     component: "monitoring"
 rules:
 # 允许读取事件和日志
@@ -42,7 +42,7 @@ metadata:
   name: opensearch-alert
   labels:
     app: opensearch-alert
-    version: "v2.0.0"
+    version: "v3.5.0"
     component: "monitoring"
 roleRef:
   apiGroup: rbac.authorization.k8s.io

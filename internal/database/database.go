@@ -447,6 +447,8 @@ func (d *Database) GetAlertsPaged(hours, page, pageSize int) ([]types.AlertHisto
 	return alerts, total, nil
 }
 
+// (removed) GetAlertsAdvanced: 恢复旧版仅支持 GetAlertsPaged
+
 // GetAlertByID 根据 alert_id 获取单条告警详情
 func (d *Database) GetAlertByID(alertID string) (*types.AlertDetail, error) {
 	query := "SELECT alert_id, rule_name, level, message, timestamp, data, count, matches FROM alert_history WHERE alert_id = ? LIMIT 1"

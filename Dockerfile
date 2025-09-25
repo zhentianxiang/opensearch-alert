@@ -61,19 +61,16 @@ RUN addgroup -g 1001 -S alert && \
 WORKDIR /app
 
 # 从构建阶段复制二进制文件
-COPY --from=builder /app/opensearch-alert .
+COPY --from=builder /app/opensearch-alert /usr/local/bin/opensearch-alert
 
 # 复制配置文件
 COPY --from=builder /app/configs ./configs
-
-# 复制规则文件
-COPY --from=builder /app/configs/rules ./rules
 
 COPY --from=builder /app/web ./web
 
 # 创建日志目录
 RUN mkdir -p /var/log/opensearch-alert && \
-    chown -R alert:alert /app
+    chown -R alert:alert /app/
 
 # 切换到非root用户
 USER alert
@@ -86,4 +83,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD ps aux | grep opensearch-alert | grep -v grep > /dev/null || exit 1
 
 # 启动命令
-CMD ["./opensearch-alert", "-config=/app/configs/config.yaml", "-rules=/app/rules"]
+CMD ["/usr/local/bin/opensearch-alert", "-config=/app/configs/config.yaml"]
