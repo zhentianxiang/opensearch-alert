@@ -36,7 +36,7 @@ data:
             username: 2099637909@qq.com
             password: axfemcfxzkspcheb
             from_email: 2099637909@qq.com
-            to_emails: []
+            to_emails: [2099637909@qq.com]
             use_tls: true
         dingtalk:
             enabled: false
